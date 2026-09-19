@@ -1,0 +1,72 @@
+# Android workspace inspired by a common emulator/editor/TUI workflow.
+# Commands and app IDs vary by IDE/emulator; adjust them for your setup.
+
+[workbench.android-dev]
+workspace = "Android Dev"
+focus = "editor"
+spawn_timeout_ms = 15000
+
+[[workbench.android-dev.windows]]
+name = "controls"
+command = ["kitty", "--class", "wb-android-controls", "--title", "android-controls"]
+[workbench.android-dev.windows.match]
+app_id = '^wb-android-controls$'
+[workbench.android-dev.windows.layout]
+column = 1
+column_width = "180px"
+
+[[workbench.android-dev.windows]]
+name = "emulator"
+command = ["emulator", "-avd", "Pixel_8_API_35"]
+[workbench.android-dev.windows.match]
+app_id = '^(qemu-system|Android Emulator|emulator)'
+title = 'Android Emulator|Pixel'
+[workbench.android-dev.windows.layout]
+column = 2
+column_width = "30%"
+display = "tabbed"
+
+[[workbench.android-dev.windows]]
+name = "docs"
+command = ["google-chrome-stable", "https://developer.android.com"]
+[workbench.android-dev.windows.match]
+app_id = '^google-chrome$'
+title = 'Android Developers'
+[workbench.android-dev.windows.layout]
+column = 2
+display = "tabbed"
+
+[[workbench.android-dev.windows]]
+name = "editor"
+command = ["code", "~/Projects/android-app"]
+[workbench.android-dev.windows.match]
+app_id = '^code$'
+title = 'android-app'
+[workbench.android-dev.windows.layout]
+column = 3
+column_width = "50%"
+display = "tabbed"
+
+[[workbench.android-dev.windows]]
+name = "logcat"
+command = [
+  "kitty", "--class", "wb-android-logcat", "--title", "android-logcat",
+  "bash", "-lc", "adb logcat; exec bash"
+]
+[workbench.android-dev.windows.match]
+app_id = '^wb-android-logcat$'
+[workbench.android-dev.windows.layout]
+column = 3
+display = "tabbed"
+
+[[workbench.android-dev.windows]]
+name = "shell"
+command = [
+  "kitty", "--class", "wb-android-shell", "--title", "android-shell",
+  "bash", "-lc", "exec bash"
+]
+[workbench.android-dev.windows.match]
+app_id = '^wb-android-shell$'
+[workbench.android-dev.windows.layout]
+column = 4
+column_width = "20%"

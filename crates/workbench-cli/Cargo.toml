@@ -1,0 +1,17 @@
+[package]
+name = "niri-workbench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Reproducible project workspaces for the Niri Wayland compositor"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+shellexpand.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+workbench-core = { path = "../workbench-core" }
+workbench-niri = { path = "../workbench-niri" }

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/workbench-core",
+    "crates/workbench-niri",
+    "crates/workbench-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive"] }
+niri-ipc = "=26.4.0"
+regex = "1.11.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_path_to_error = "0.1.20"
+shellexpand = "3.1.1"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+toml = "0.9.7"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }

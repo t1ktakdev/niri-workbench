@@ -1,0 +1,45 @@
+# Study/research recipe. Replace the notes command with your editor of choice.
+
+[workbench.research]
+workspace = "Research"
+focus = "notes"
+
+[[workbench.research.windows]]
+name = "notes"
+command = ["code", "~/Notes"]
+[workbench.research.windows.match]
+app_id = '^code$'
+title = 'Notes'
+[workbench.research.windows.layout]
+column = 1
+column_width = "45%"
+
+[[workbench.research.windows]]
+name = "reference"
+command = ["google-chrome-stable", "https://scholar.google.com"]
+[workbench.research.windows.match]
+app_id = '^google-chrome$'
+title = 'Scholar'
+[workbench.research.windows.layout]
+column = 2
+column_width = "40%"
+display = "tabbed"
+
+[[workbench.research.windows]]
+name = "course"
+command = ["google-chrome-stable", "https://www.youtube.com"]
+[workbench.research.windows.match]
+app_id = '^google-chrome$'
+title = 'YouTube'
+[workbench.research.windows.layout]
+column = 2
+display = "tabbed"
+
+[[workbench.research.windows]]
+name = "scratch"
+command = ["kitty", "--class", "wb-research-shell", "--title", "research-shell"]
+[workbench.research.windows.match]
+app_id = '^wb-research-shell$'
+[workbench.research.windows.layout]
+column = 3
+column_width = "25%"

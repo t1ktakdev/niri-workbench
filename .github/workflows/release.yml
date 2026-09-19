@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(
+            cargo metadata --no-deps --format-version 1 |
+              python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"]=="niri-workbench"))'
+          )"
+          test "$tag_version" = "$package_version"
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          target="x86_64-unknown-linux-gnu"
+          dir="niri-workbench-v${version}-${target}"
+
+          mkdir "$dir"
+          install -m 0755 target/release/niri-workbench "$dir/niri-workbench"
+          install -m 0755 scripts/install.sh "$dir/install.sh"
+          install -m 0755 scripts/uninstall.sh "$dir/uninstall.sh"
+          install -m 0644 README.md CHANGELOG.md LICENSE "$dir/"
+          install -m 0644 packaging/PKGBUILD "$dir/PKGBUILD"
+
+          tar -czf "$dir.tar.gz" "$dir"
+          sha256sum "$dir.tar.gz" > SHA256SUMS
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            niri-workbench-v*-x86_64-unknown-linux-gnu.tar.gz
+            SHA256SUMS

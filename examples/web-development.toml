@@ -1,0 +1,51 @@
+# A simple editor / browser / dev-server layout.
+
+[workbench.web-dev]
+workspace = "Web Dev"
+focus = "editor"
+
+[[workbench.web-dev.windows]]
+name = "editor"
+command = ["code", "~/Projects/web-app"]
+[workbench.web-dev.windows.match]
+app_id = '^code$'
+title = 'web-app'
+[workbench.web-dev.windows.layout]
+column = 1
+column_width = "50%"
+
+[[workbench.web-dev.windows]]
+name = "app"
+command = ["google-chrome-stable", "http://localhost:5173"]
+reuse = "never"
+[workbench.web-dev.windows.match]
+app_id = '^google-chrome$'
+title = 'localhost'
+[workbench.web-dev.windows.layout]
+column = 2
+column_width = "35%"
+display = "tabbed"
+
+[[workbench.web-dev.windows]]
+name = "docs"
+command = ["google-chrome-stable", "https://developer.mozilla.org"]
+[workbench.web-dev.windows.match]
+app_id = '^google-chrome$'
+title = 'MDN|Mozilla'
+[workbench.web-dev.windows.layout]
+column = 2
+display = "tabbed"
+
+[[workbench.web-dev.windows]]
+name = "server"
+command = [
+  "kitty", "--class", "wb-web-server",
+  "--directory", "~/Projects/web-app",
+  "--title", "web-server",
+  "bash", "-lc", "npm run dev; exec bash"
+]
+[workbench.web-dev.windows.match]
+app_id = '^wb-web-server$'
+[workbench.web-dev.windows.layout]
+column = 3
+column_width = "25%"

@@ -1,0 +1,51 @@
+# Adjust paths, browser titles, and app IDs to match your applications.
+
+[workbench.rust-dev]
+workspace = "Rust Dev"
+focus = "editor"
+spawn_timeout_ms = 10000
+
+[[workbench.rust-dev.windows]]
+name = "editor"
+command = ["code", "~/Projects/example-rs"]
+[workbench.rust-dev.windows.match]
+app_id = '^code$'
+title = 'example-rs'
+[workbench.rust-dev.windows.layout]
+column = 1
+column_width = "55%"
+
+[[workbench.rust-dev.windows]]
+name = "docs"
+command = ["google-chrome-stable", "https://docs.rs"]
+[workbench.rust-dev.windows.match]
+app_id = '^google-chrome$'
+title = 'docs\.rs'
+[workbench.rust-dev.windows.layout]
+column = 2
+column_width = "30%"
+display = "tabbed"
+
+[[workbench.rust-dev.windows]]
+name = "github"
+command = ["google-chrome-stable", "https://github.com"]
+[workbench.rust-dev.windows.match]
+app_id = '^google-chrome$'
+title = 'GitHub'
+[workbench.rust-dev.windows.layout]
+column = 2
+display = "tabbed"
+
+[[workbench.rust-dev.windows]]
+name = "watch"
+command = [
+  "kitty", "--class", "wb-rust-watch",
+  "--directory", "~/Projects/example-rs",
+  "--title", "rust-watch",
+  "bash", "-lc", "cargo watch -x check; exec bash"
+]
+[workbench.rust-dev.windows.match]
+app_id = '^wb-rust-watch$'
+[workbench.rust-dev.windows.layout]
+column = 3
+column_width = "25%"

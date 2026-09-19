@@ -44,6 +44,19 @@ All smoke-test windows were closed by their unique test app IDs afterward, the
 temporary workspace name was removed, and focus was returned to the original
 workspace. No pre-existing user window was closed.
 
+## GTK UI smoke test
+
+The native GTK/libadwaita UI was built in release mode and launched inside the
+same live Niri session. Home, Capture, Edit and Quick Launcher were exercised as
+real Wayland windows. The UI asks Niri to float and center its own window through
+the same IPC library rather than relying on compositor config rules.
+
+A startup race found during Capture testing was fixed by waiting on EventStream
+until the UI toplevel with the current process PID is observable, then waiting
+for the floating-state event before applying fixed width/height. The final live
+Capture check reported a floating 1260x820 window; the Quick Launcher reported a
+floating 780x570 window.
+
 ## Release gate
 
 Before tagging:

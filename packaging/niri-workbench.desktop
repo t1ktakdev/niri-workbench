@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Workbench
+Name[ru]=Workbench
+Comment=Project workspaces for the Niri Wayland compositor
+Comment[ru]=Рабочие окружения проектов для Niri
+Exec=niri-workbench ui
+Icon=applications-development
+Terminal=false
+Categories=Development;Utility;
+Keywords=Niri;Workspace;Workbench;Layout;
+StartupNotify=true

@@ -492,6 +492,7 @@ mod tests {
 
     fn recipe(windows: Vec<WindowSpec>) -> Recipe {
         Recipe {
+            name: None,
             workspace: "Dev".into(),
             output: None,
             output_fallback: OutputFallback::Focused,

@@ -3,15 +3,16 @@
 ## Release archive
 
 Tags matching `v*` run the release workflow. For `v0.1.0` it builds the
-release binary on Linux x86_64 and publishes:
+CLI and GTK binaries on Linux x86_64 and publishes:
 
 ```text
 niri-workbench-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
-The archive contains the binary, README, changelog, license, install/uninstall
-scripts, and the example PKGBUILD.
+The archive contains both `niri-workbench` and `niri-workbench-ui`, the
+desktop entry, README, changelog, license, install/uninstall scripts, and the
+example PKGBUILD.
 
 Verify an archive before installing:
 
@@ -45,6 +46,7 @@ cd /tmp
 makepkg -p niri-workbench-pkgbuild
 ```
 
-A distro package only needs to install the `niri-workbench` binary. The
-default configuration remains user-owned at
+A full desktop package should install the CLI binary, `niri-workbench-ui`,
+and `niri-workbench.desktop`. Headless/CLI-only packages may omit the GUI.
+The default configuration remains user-owned at
 `$XDG_CONFIG_HOME/niri-workbench/config.toml`.

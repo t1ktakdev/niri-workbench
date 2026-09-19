@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install GTK build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.97.1"
@@ -45,10 +47,12 @@ jobs:
 
           mkdir "$dir"
           install -m 0755 target/release/niri-workbench "$dir/niri-workbench"
+          install -m 0755 target/release/niri-workbench-ui "$dir/niri-workbench-ui"
           install -m 0755 scripts/install.sh "$dir/install.sh"
           install -m 0755 scripts/uninstall.sh "$dir/uninstall.sh"
           install -m 0644 README.md CHANGELOG.md LICENSE "$dir/"
           install -m 0644 packaging/PKGBUILD "$dir/PKGBUILD"
+          install -m 0644 packaging/niri-workbench.desktop "$dir/niri-workbench.desktop"
 
           tar -czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > SHA256SUMS

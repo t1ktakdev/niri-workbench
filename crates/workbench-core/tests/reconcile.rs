@@ -70,6 +70,7 @@ fn desired_equals_actual_has_zero_mutating_actions() {
     let terminal = spec("terminal", "kitty", 3);
 
     let recipe = Recipe {
+        name: None,
         workspace: "Dev".into(),
         output: None,
         output_fallback: OutputFallback::Focused,
@@ -96,6 +97,7 @@ fn planner_repairs_wrong_column_before_sizes() {
     terminal.layout.display = Some(workbench_core::ColumnDisplay::Tabbed);
 
     let recipe = Recipe {
+        name: None,
         workspace: "Dev".into(),
         output: None,
         output_fallback: OutputFallback::Focused,

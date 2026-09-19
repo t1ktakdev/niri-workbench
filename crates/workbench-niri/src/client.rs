@@ -917,6 +917,7 @@ mod tests {
 
     fn recipe(output: Option<&str>, fallback: OutputFallback) -> Recipe {
         Recipe {
+            name: None,
             workspace: "Dev".into(),
             output: output.map(str::to_owned),
             output_fallback: fallback,

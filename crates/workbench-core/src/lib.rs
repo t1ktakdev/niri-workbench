@@ -3,7 +3,7 @@ mod matcher;
 mod model;
 mod planner;
 
-pub use config::{ConfigError, load_config, parse_config};
+pub use config::{ConfigError, load_config, parse_config, save_config};
 pub use matcher::{Candidate, CandidateDecision, CompiledMatcher, MatchError, choose_candidate};
 pub use model::{
     ColumnDisplay, Config, MatchSpec, ObservedState, OutputFallback, OutputInfo, PlacementSpec,

@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser, Subcommand};
@@ -35,7 +36,7 @@ struct Cli {
     verbose: u8,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -48,6 +49,8 @@ enum Commands {
     Status { name: String },
     /// Show what apply would do without changing anything.
     Plan { name: String },
+    /// Open a workbench: reuse existing apps, launch missing ones, and restore layout.
+    Open { name: String },
     /// Reconcile the current Niri state with a recipe.
     Apply {
         name: String,
@@ -55,6 +58,12 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Restore layout using existing windows only; never launch missing applications.
+    Repair { name: String },
+    /// Open the full graphical Workbench manager.
+    Ui,
+    /// Open the compact graphical workbench launcher.
+    Quick,
     /// Check Niri, IPC, config, commands, outputs, and recipe consistency.
     Doctor,
 }
@@ -79,33 +88,43 @@ async fn main() -> Result<()> {
     let config_path = cli.config.clone().unwrap_or_else(default_config_path);
 
     match cli.command {
-        Commands::Doctor => doctor(&config_path, cli.socket.as_deref()).await,
-        Commands::List => {
+        None => launch_ui(true),
+        Some(Commands::Ui) => launch_ui(false),
+        Some(Commands::Quick) => launch_ui(true),
+        Some(Commands::Doctor) => doctor(&config_path, cli.socket.as_deref()).await,
+        Some(Commands::List) => {
             let config = load_config(&config_path)?;
-            for (name, recipe) in config.workbench {
-                println!("{name:<20} {}", recipe.workspace);
+            for (key, recipe) in config.workbench {
+                let display = recipe.name.as_deref().unwrap_or(&recipe.workspace);
+                println!("{key:<20} {display}  [workspace: {}]", recipe.workspace);
             }
             Ok(())
         }
-        Commands::Show { name } => {
+        Some(Commands::Show { name }) => {
             let config = load_config(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             print_recipe(&name, recipe);
             Ok(())
         }
-        Commands::Status { name } => {
+        Some(Commands::Status { name }) => {
             let config = load_config(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             status(&name, recipe, &session).await
         }
-        Commands::Plan { name } => {
+        Some(Commands::Plan { name }) => {
             let config = load_config(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             plan(&name, recipe, &session).await
         }
-        Commands::Apply { name, dry_run } => {
+        Some(Commands::Open { name }) => {
+            let config = load_config(&config_path)?;
+            let recipe = recipe(&config.workbench, &name)?;
+            let session = connect(cli.socket.as_deref()).await?;
+            apply(&name, recipe, &session).await
+        }
+        Some(Commands::Apply { name, dry_run }) => {
             let config = load_config(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
@@ -115,7 +134,35 @@ async fn main() -> Result<()> {
                 apply(&name, recipe, &session).await
             }
         }
+        Some(Commands::Repair { name }) => {
+            let config = load_config(&config_path)?;
+            let recipe = recipe(&config.workbench, &name)?;
+            let session = connect(cli.socket.as_deref()).await?;
+            repair(&name, recipe, &session).await
+        }
     }
+}
+
+fn launch_ui(quick: bool) -> Result<()> {
+    let current = env::current_exe().context("could not locate niri-workbench executable")?;
+    let sibling = current.with_file_name("niri-workbench-ui");
+    let program = if sibling.exists() {
+        sibling
+    } else {
+        PathBuf::from("niri-workbench-ui")
+    };
+
+    let mut command = ProcessCommand::new(&program);
+    if quick {
+        command.arg("--quick");
+    }
+    command.spawn().with_context(|| {
+        format!(
+            "could not launch {}; install the UI binary with scripts/install.sh",
+            program.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn init_tracing(verbose: u8) {
@@ -169,6 +216,9 @@ fn recipe<'a>(workbenches: &'a BTreeMap<String, Recipe>, name: &str) -> Result<&
 
 fn print_recipe(name: &str, recipe: &Recipe) {
     println!("Workbench: {name}");
+    if let Some(display) = &recipe.name {
+        println!("Name:      {display}");
+    }
     println!("Workspace: {}", recipe.workspace);
     if let Some(output) = &recipe.output {
         println!("Output:    {output}");
@@ -412,6 +462,68 @@ async fn apply(name: &str, recipe: &Recipe, session: &NiriSession) -> Result<()>
         }
     }
 
+    Ok(())
+}
+
+async fn repair(name: &str, recipe: &Recipe, session: &NiriSession) -> Result<()> {
+    let target = session.resolve_target_output(recipe).await?;
+    if let Some(warning) = &target.fallback_warning {
+        eprintln!("warning: {warning}");
+    }
+
+    let snapshot = session.snapshot().await;
+    let mut used = HashSet::new();
+    let mut ids = BTreeMap::new();
+    let mut missing = Vec::new();
+
+    for spec in &recipe.windows {
+        match choose_candidate(spec, &snapshot.windows, &used, None)
+            .with_context(|| format!("invalid matcher for logical window {:?}", spec.name))?
+        {
+            CandidateDecision::None => missing.push(spec.name.clone()),
+            CandidateDecision::One(candidate) => {
+                used.insert(candidate.id);
+                ids.insert(spec.name.clone(), candidate.id);
+            }
+            CandidateDecision::Ambiguous(candidates) => {
+                bail!(
+                    "cannot repair {:?}: {} existing windows match; refine its matcher first",
+                    spec.name,
+                    candidates.len()
+                );
+            }
+        }
+    }
+
+    if !missing.is_empty() {
+        bail!(
+            "repair never launches applications; missing window(s): {}. Use niri-workbench open {name} instead.",
+            missing.join(", ")
+        );
+    }
+
+    let workspace_id = session
+        .ensure_workspace(&recipe.workspace, &target.name)
+        .await?;
+    let report = reconcile(session, recipe, &ids, workspace_id).await?;
+
+    if report.executed.is_empty() && report.remaining.is_empty() {
+        println!("{name} observable layout already converged");
+    } else {
+        println!("Repaired {name}:");
+        for action in &report.executed {
+            println!("  {}", format_action(action));
+        }
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if !report.remaining.is_empty() {
+        eprintln!("warning: observable state still has drift:");
+        for action in &report.remaining {
+            eprintln!("  {}", format_action(action));
+        }
+    }
     Ok(())
 }
 

@@ -4,14 +4,16 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub workbench: BTreeMap<String, Recipe>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Recipe {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub workspace: String,
     #[serde(default)]
     pub output: Option<String>,
@@ -29,7 +31,7 @@ const fn default_spawn_timeout_ms() -> u64 {
     10_000
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WindowSpec {
     pub name: String,
     #[serde(default)]
@@ -42,7 +44,7 @@ pub struct WindowSpec {
     pub layout: PlacementSpec,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MatchSpec {
     pub window_id: Option<u64>,
     pub app_id: Option<String>,
@@ -51,7 +53,7 @@ pub struct MatchSpec {
     pub pid: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReusePolicy {
     #[default]
@@ -59,7 +61,7 @@ pub enum ReusePolicy {
     Never,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlacementSpec {
     #[serde(default = "default_column")]
     pub column: usize,
@@ -92,14 +94,14 @@ const fn default_column() -> usize {
     1
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ColumnDisplay {
     Normal,
     Tabbed,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFallback {
     #[default]

@@ -7,9 +7,11 @@
 Reproducible project workspaces for the Niri Wayland compositor.
 
 ```bash
+niri-workbench          # quick graphical launcher
+niri-workbench ui       # full manager
 niri-workbench doctor
 niri-workbench plan rust-dev
-niri-workbench apply rust-dev
+niri-workbench open rust-dev
 ```
 
 `niri-workbench` turns a declarative project recipe into a real Niri workspace. It reuses matching windows when that is unambiguous, spawns missing applications, moves them to a named workspace, rebuilds columns, applies sizing and tabbed display, then restores a requested final focus.
@@ -53,7 +55,7 @@ cargo build --release
 ./scripts/install.sh
 ```
 
-The install script installs the locally built binary to `~/.local/bin/niri-workbench` by default. It does not use root or modify Niri configuration.
+The install script installs both `~/.local/bin/niri-workbench` and `~/.local/bin/niri-workbench-ui`, plus the desktop entry under `~/.local/share/applications` by default. It does not use root or modify Niri configuration.
 
 Release archives are prepared by the tag workflow and contain the binary, license, README, changelog, and install/uninstall scripts.
 
@@ -63,6 +65,7 @@ Create `~/.config/niri-workbench/config.toml`:
 
 ```toml
 [workbench.rust-dev]
+name = "Rust / example"
 workspace = "Rust Dev"
 focus = "editor"
 spawn_timeout_ms = 10000
@@ -112,18 +115,29 @@ column = 3
 column_width = "25%"
 ```
 
-Then inspect before mutating anything:
+Then either use the GUI or inspect from the CLI before mutating anything:
 
 ```bash
+niri-workbench ui
 niri-workbench doctor
 niri-workbench plan rust-dev
 niri-workbench apply rust-dev --dry-run
-niri-workbench apply rust-dev
+niri-workbench open rust-dev
 ```
+
+The GUI includes Home, Capture, Library, Settings, a visual layout editor, and a compact quick launcher. Capture reads the currently focused Niri workspace and builds an editable draft; launch commands are always shown before the recipe is saved.
+
+For a Niri key binding, point directly at the quick launcher, for example:
+
+```kdl
+Mod+W { spawn "niri-workbench"; }
+```
+
+The full manager remains available with `niri-workbench ui`.
 
 ## Configuration
 
-A recipe has one named Niri workspace and a list of logical windows. Each window has:
+A recipe has an optional user-facing `name`, one named Niri `workspace`, and a list of logical windows. Keeping the display name separate from the workspace name lets the UI show labels such as `Rust / niri-workbench` while Niri uses a shorter workspace name such as `Dev`. Each window has:
 
 - a logical `name`;
 - an optional spawn `command`;
@@ -164,10 +178,15 @@ In v0.1 one logical workbench is one Niri workspace, so its tiling windows canno
 ## Commands
 
 ```text
+niri-workbench                 # quick launcher
+niri-workbench ui              # full GTK manager
+niri-workbench quick           # explicit quick launcher
 niri-workbench list
 niri-workbench show NAME
 niri-workbench status NAME
 niri-workbench plan NAME
+niri-workbench open NAME
+niri-workbench repair NAME
 niri-workbench apply NAME
 niri-workbench apply NAME --dry-run
 niri-workbench doctor
@@ -193,7 +212,7 @@ Percentage verification is approximate because IPC exposes logical output dimens
 
 Some column actions are focus-based in Niri. Workbench uses ID-addressable actions where available and restores the configured final focus after reconciliation.
 
-Capture is intentionally not included in v0.1. IPC cannot reliably infer the correct launch command for an arbitrary GUI window, and current column display mode is not observable.
+Graphical Capture is intentionally conservative. It can infer common launch commands such as Kitty, VS Code, Chrome and Firefox and otherwise falls back to a known process executable when safe. Arbitrary GUI launch commands, document/session state, browser URLs and current tabbed-column mode cannot always be reconstructed from Niri IPC, so Capture presents an editable draft instead of claiming perfect session restoration.
 
 ## Development
 
@@ -210,7 +229,7 @@ Architecture and upstream constraints are documented in `docs/architecture.md`. 
 
 v0.1 focuses on declarative recipes, event-driven matching, idempotent apply, named workspaces, columns, sizing, tabbed display, dry-run and doctor.
 
-Possible later work: safer capture assistance, an interactive recipe generator, shell completions, and per-recipe environment declarations. No timeline is implied.
+Possible later work: richer capture hints for applications with recoverable document/session metadata, keyboard-driven editor improvements, shell completions, and per-recipe environment declarations. No timeline is implied.
 
 ## License
 

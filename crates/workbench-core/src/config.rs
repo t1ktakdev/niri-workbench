@@ -25,6 +25,18 @@ pub enum ConfigError {
     },
     #[error("{path}: {message}")]
     Validation { path: String, message: String },
+    #[error("could not serialize config {path}: {source}")]
+    Serialize {
+        path: String,
+        #[source]
+        source: toml::ser::Error,
+    },
+    #[error("could not write config {path}: {source}")]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 pub fn load_config(path: &Path) -> Result<Config, ConfigError> {
@@ -33,6 +45,36 @@ pub fn load_config(path: &Path) -> Result<Config, ConfigError> {
         source,
     })?;
     parse_config(&text, &path.display().to_string())
+}
+
+pub fn save_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
+    validate_config(config)?;
+
+    let text = toml::to_string_pretty(config).map_err(|source| ConfigError::Serialize {
+        path: path.display().to_string(),
+        source,
+    })?;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(".tmp");
+    let temporary = std::path::PathBuf::from(temporary);
+
+    fs::write(&temporary, text).map_err(|source| ConfigError::Write {
+        path: temporary.display().to_string(),
+        source,
+    })?;
+    fs::rename(&temporary, path).map_err(|source| ConfigError::Write {
+        path: path.display().to_string(),
+        source,
+    })?;
+    Ok(())
 }
 
 pub fn parse_config(text: &str, source_name: &str) -> Result<Config, ConfigError> {
@@ -240,6 +282,7 @@ mod tests {
         let config = parse_config(
             r#"
             [workbench.dev]
+            name = "Rust / example"
             workspace = "Dev"
 
             [[workbench.dev.windows]]
@@ -257,6 +300,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            config.workbench["dev"].name.as_deref(),
+            Some("Rust / example")
+        );
         assert_eq!(config.workbench["dev"].windows.len(), 1);
     }
 

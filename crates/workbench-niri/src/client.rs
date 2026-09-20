@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -191,7 +191,11 @@ impl NiriSession {
     }
 
     pub async fn snapshot(&self) -> ObservedState {
-        self.state.read().await.clone()
+        let mut snapshot = self.state.read().await.clone();
+        for window in &mut snapshot.windows {
+            refresh_process_metadata(window);
+        }
+        snapshot
     }
 
     pub async fn version_string(&self) -> Result<String, NiriError> {
@@ -321,8 +325,10 @@ impl NiriSession {
             .collect();
 
         debug!(window = %spec.name, ?command, "spawning missing window");
-        let mut child = Command::new(&command[0])
-            .args(&command[1..])
+        let mut launch = Command::new(&command[0]);
+        launch.args(&command[1..]);
+        apply_niri_session_environment(&mut launch, &self.socket_path);
+        let mut child = launch
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -825,10 +831,8 @@ async fn apply_event_value(value: &serde_json::Value, state: &RwLock<ObservedSta
 }
 
 fn convert_window(window: Window) -> RuntimeWindow {
-    let process_exe = window
-        .pid
-        .and_then(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok())
-        .map(|path| path.to_string_lossy().into_owned());
+    let process_exe = window.pid.and_then(process_exe);
+    let cwd = window.pid.and_then(effective_process_cwd);
     let (column, tile_index) = window
         .layout
         .pos_in_scrolling_layout
@@ -841,6 +845,7 @@ fn convert_window(window: Window) -> RuntimeWindow {
         app_id: window.app_id,
         pid: window.pid,
         process_exe,
+        cwd,
         workspace_id: window.workspace_id,
         is_focused: window.is_focused,
         is_floating: window.is_floating,
@@ -849,6 +854,111 @@ fn convert_window(window: Window) -> RuntimeWindow {
         tile_width: window.layout.tile_size.0,
         tile_height: window.layout.tile_size.1,
     }
+}
+
+fn refresh_process_metadata(window: &mut RuntimeWindow) {
+    let Some(pid) = window.pid else {
+        return;
+    };
+    window.process_exe = process_exe(pid).or_else(|| window.process_exe.clone());
+    window.cwd = effective_process_cwd(pid).or_else(|| window.cwd.clone());
+}
+
+fn niri_wayland_display(socket: &Path) -> Option<String> {
+    let file = socket.file_name()?.to_str()?;
+    let body = file.strip_prefix("niri.")?.strip_suffix(".sock")?;
+    let (display, pid) = body.rsplit_once('.')?;
+    pid.parse::<u32>().ok()?;
+    (!display.is_empty()).then(|| display.to_owned())
+}
+
+fn apply_niri_session_environment(command: &mut Command, socket: &Path) {
+    let set_if_missing = |command: &mut Command, key: &str, value: String| {
+        if std::env::var_os(key).is_none() && !value.is_empty() {
+            command.env(key, value);
+        }
+    };
+
+    set_if_missing(command, "XDG_CURRENT_DESKTOP", "niri".to_owned());
+    set_if_missing(command, "XDG_SESSION_DESKTOP", "niri".to_owned());
+    set_if_missing(command, "XDG_SESSION_TYPE", "wayland".to_owned());
+
+    if let Some(display) = niri_wayland_display(socket) {
+        set_if_missing(command, "WAYLAND_DISPLAY", display);
+    }
+    if let Some(runtime) = socket.parent() {
+        let runtime = runtime.to_string_lossy().into_owned();
+        set_if_missing(command, "XDG_RUNTIME_DIR", runtime.clone());
+        let bus = Path::new(&runtime).join("bus");
+        if bus.exists() {
+            set_if_missing(
+                command,
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", bus.display()),
+            );
+        }
+    }
+}
+
+fn process_exe(pid: i32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn process_cwd(pid: i32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn process_children(pid: i32) -> Vec<i32> {
+    std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
+        .ok()
+        .into_iter()
+        .flat_map(|text| {
+            text.split_whitespace()
+                .filter_map(|value| value.parse::<i32>().ok())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn is_interactive_shell(pid: i32) -> bool {
+    let Some(exe) = process_exe(pid) else {
+        return false;
+    };
+    let name = Path::new(&exe)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    matches!(name, "bash" | "fish" | "zsh" | "sh" | "dash" | "nu")
+}
+
+fn effective_process_cwd(root: i32) -> Option<String> {
+    let fallback = process_cwd(root);
+    let mut queue = VecDeque::from([(root, 0usize)]);
+    let mut visited = HashSet::new();
+
+    while let Some((pid, depth)) = queue.pop_front() {
+        if !visited.insert(pid) {
+            continue;
+        }
+        if pid != root && is_interactive_shell(pid) {
+            if let Some(cwd) = process_cwd(pid) {
+                return Some(cwd);
+            }
+        }
+        if depth < 3 {
+            queue.extend(
+                process_children(pid)
+                    .into_iter()
+                    .map(|child| (child, depth + 1)),
+            );
+        }
+    }
+
+    fallback
 }
 
 fn apply_layout(window: &mut RuntimeWindow, layout: &WindowLayout) {
@@ -889,8 +999,12 @@ fn convert_outputs(outputs: std::collections::HashMap<String, Output>) -> Vec<Ou
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::path::Path;
 
-    use super::{choose_spawn_candidate, focused_output_name, resolve_target_output_from_state};
+    use super::{
+        choose_spawn_candidate, focused_output_name, niri_wayland_display,
+        resolve_target_output_from_state,
+    };
     use workbench_core::{
         CandidateDecision, MatchSpec, ObservedState, OutputFallback, OutputInfo, PlacementSpec,
         Recipe, ReusePolicy, RuntimeWindow, RuntimeWorkspace, WindowSpec,
@@ -954,6 +1068,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_wayland_display_from_niri_socket_name() {
+        assert_eq!(
+            niri_wayland_display(Path::new("/run/user/1000/niri.wayland-1.1386.sock")).as_deref(),
+            Some("wayland-1")
+        );
+        assert_eq!(niri_wayland_display(Path::new("/tmp/not-niri.sock")), None);
+    }
+
+    #[test]
     fn spawned_process_pid_breaks_an_otherwise_ambiguous_tie() {
         let spec = WindowSpec {
             name: "browser".into(),
@@ -971,6 +1094,7 @@ mod tests {
             app_id: Some("browser".into()),
             pid: Some(pid),
             process_exe: None,
+            cwd: None,
             workspace_id: Some(1),
             is_focused: false,
             is_floating: false,

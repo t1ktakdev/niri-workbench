@@ -80,6 +80,7 @@ pub fn tr(language: Language, key: &str) -> &str {
         (Language::Ru, "final_focus") => "Фокус после открытия",
         (Language::Ru, "match_app") => "App ID",
         (Language::Ru, "match_title") => "Заголовок окна",
+        (Language::Ru, "match_cwd") => "Рабочая папка (cwd)",
         (Language::Ru, "advanced") => "Дополнительно",
         (Language::Ru, "language") => "Язык",
         (Language::Ru, "language_help") => {
@@ -151,6 +152,7 @@ pub fn tr(language: Language, key: &str) -> &str {
         (_, "final_focus") => "Focus after opening",
         (_, "match_app") => "App ID",
         (_, "match_title") => "Window title",
+        (_, "match_cwd") => "Working directory (cwd)",
         (_, "advanced") => "Advanced",
         (_, "language") => "Language",
         (_, "language_help") => "Interface language is stored separately from Workbench recipes.",

@@ -28,8 +28,74 @@ fn parse_start_page(args: &[OsString]) -> Option<ui::StartPage> {
     }
 }
 
+fn dump_capture(args: &[String]) -> anyhow::Result<()> {
+    let snapshot = state::niri_snapshot()?;
+    let requested_workspace = args
+        .iter()
+        .filter_map(|arg| arg.strip_prefix("--workspace="))
+        .next();
+    let preferred_workspace_id = requested_workspace.and_then(|name| {
+        snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.name.as_deref() == Some(name)
+                    || workspace.index.to_string() == name
+                    || workspace.id.to_string() == name
+            })
+            .map(|workspace| workspace.id)
+    });
+    if requested_workspace.is_some() && preferred_workspace_id.is_none() {
+        anyhow::bail!(
+            "workspace {:?} was not found",
+            requested_workspace.unwrap_or_default()
+        );
+    }
+    let draft = state::capture_workspace(&snapshot, preferred_workspace_id, None)?;
+    println!(
+        "capture: {} / workspace {} / {} detected window(s)",
+        draft.recipe.name.as_deref().unwrap_or("unnamed"),
+        draft.recipe.workspace,
+        draft.recipe.windows.len()
+    );
+    for (index, (window, detail)) in draft
+        .recipe
+        .windows
+        .iter()
+        .zip(draft.details.iter())
+        .enumerate()
+    {
+        println!(
+            "{} {} [{}] app_id={:?} cwd={:?} column={} command={}",
+            if detail.include_by_default {
+                "INCLUDE"
+            } else {
+                "EXCLUDE"
+            },
+            index + 1,
+            window.name,
+            detail.app_id,
+            detail.cwd,
+            window.layout.column,
+            state::display_command(&window.command)
+        );
+        if let Some(note) = &detail.inclusion_note {
+            println!("  note: {note}");
+        }
+        println!("  title: {}", detail.title);
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--dump-capture") {
+        if let Err(error) = dump_capture(&args) {
+            eprintln!("capture error: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let quick = args.iter().any(|arg| arg == "--quick");
     let app_id = if quick {
         "dev.t1ktak.NiriWorkbench.Quick"

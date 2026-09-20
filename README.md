@@ -20,7 +20,7 @@ It is a workspace snapshot/rebuilder, not a byte-for-byte process checkpoint: it
 
 ## Why
 
-Project workspaces are usually intentional. Arrange the editor, browser and terminals the way you want, choose **Save current**, then reopen that snapshot later. The saved recipe stays editable, so automatic capture and deliberate configuration can coexist.
+Project workspaces are usually intentional. Arrange the editor, browser and terminals the way you want, choose **Save current**, then reopen that snapshot later. The saved recipe stays editable, so automatic capture and deliberate configuration can coexist. Saving the same display name and Niri workspace again updates that snapshot instead of silently creating duplicate cards.
 
 The core loop is:
 
@@ -151,12 +151,14 @@ A recipe has an optional user-facing `name`, one named Niri `workspace`, and a l
 
 - a logical `name`;
 - an optional spawn `command`;
-- a matcher using `window_id`, `app_id`, `title`, `process`, or `pid`;
+- a matcher using `window_id`, `app_id`, `title`, `process`, `cwd`, or `pid`;
 - a `layout` with column, width/height, display mode, floating state, and optional output.
 
-`app_id`, `title`, and `process` are regular expressions. Match fields are ANDed. A generic matcher that matches multiple existing windows is treated as ambiguous rather than guessed.
+`app_id`, `title`, `process`, and `cwd` are regular expressions. Match fields are ANDed. Captured terminal windows prefer a unique shell working directory over a volatile window title when that can disambiguate them. A generic matcher that matches multiple existing windows is treated as ambiguous rather than guessed.
 
 `reuse = "never"` can be used when a recipe intentionally requires a fresh window. Otherwise existing unique matches are reused.
+
+Automatic **Save current** snapshots store the observed Niri tile sizes in logical pixels. Niri's IPC exposes output dimensions but not the exact working-area dimensions used by proportional sizing, so pixel capture is the only way to reproduce the measured layout without guessing around panels and gaps. Hand-edited recipes can still use percentages.
 
 Sizes accept percentages or positive pixels:
 

@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use niri_ipc::{Action as NiriAction, SizeChange};
 use workbench_core::{
-    CandidateDecision, ColumnDisplay, Config, MatchSpec, ObservedState, OutputFallback,
+    Action, CandidateDecision, ColumnDisplay, Config, MatchSpec, ObservedState, OutputFallback,
     PlacementSpec, Recipe, ReusePolicy, RuntimeWindow, Size, WindowSpec, build_reconcile_plan,
     choose_candidate, load_config, save_config,
 };
@@ -34,6 +34,8 @@ pub struct CapturedWindow {
     pub title: String,
     pub app_id: String,
     pub cwd: Option<String>,
+    pub include_by_default: bool,
+    pub inclusion_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -491,16 +493,34 @@ pub fn recipe_status(recipe: &Recipe, state: Option<&ObservedState>) -> RecipeSt
     }
 
     let plan = build_reconcile_plan(recipe, state, &ids, workspace.id, false);
-    if plan.actions.is_empty() {
+    if plan.actions.is_empty()
+        || (workbench_ui_has_focus(state)
+            && plan
+                .actions
+                .iter()
+                .all(|action| matches!(action, Action::Focus { .. })))
+    {
         RecipeStatus::Ready
     } else {
         RecipeStatus::LayoutChanged
     }
 }
 
+fn workbench_ui_has_focus(state: &ObservedState) -> bool {
+    state.windows.iter().any(|window| {
+        window.is_focused
+            && window
+                .app_id
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("dev.t1ktak.NiriWorkbench")
+    })
+}
+
 pub fn capture_workspace(
     state: &ObservedState,
     preferred_workspace_id: Option<u64>,
+    preferred_focus_window_id: Option<u64>,
 ) -> Result<CaptureDraft> {
     let workspace = preferred_workspace_id
         .and_then(|id| state.workspaces.iter().find(|workspace| workspace.id == id))
@@ -533,10 +553,25 @@ pub fn capture_workspace(
     });
 
     let mut column_counts = HashMap::<usize, usize>::new();
-    let mut app_id_counts = HashMap::<String, usize>::new();
     for window in &windows {
         if let Some(column) = window.column {
             *column_counts.entry(column).or_default() += 1;
+        }
+    }
+
+    // Matchers are evaluated against every Niri window, not only the captured workspace.
+    // Count identities globally so Save current never creates a matcher that can steal an
+    // unrelated window from another workspace.
+    let mut app_id_counts = HashMap::<String, usize>::new();
+    let mut app_cwd_counts = HashMap::<(String, String), usize>::new();
+    for window in &state.windows {
+        if window
+            .app_id
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("dev.t1ktak.NiriWorkbench")
+        {
+            continue;
         }
         if let Some(app_id) = window
             .app_id
@@ -544,20 +579,20 @@ pub fn capture_workspace(
             .filter(|value| !value.trim().is_empty())
         {
             *app_id_counts.entry(app_id.clone()).or_default() += 1;
+            if let Some(cwd) = window.cwd.as_ref().filter(|value| !value.trim().is_empty()) {
+                *app_cwd_counts
+                    .entry((app_id.clone(), cwd.clone()))
+                    .or_default() += 1;
+            }
         }
     }
-
-    let output_size = workspace
-        .output
-        .as_deref()
-        .and_then(|name| state.output(name))
-        .and_then(|output| Some((f64::from(output.width?), f64::from(output.height?))));
 
     let workspace_name = workspace
         .name
         .clone()
         .unwrap_or_else(|| format!("Workspace {}", workspace.index));
     let installed_apps = installed_applications();
+    let project_root = infer_capture_project_root(&windows);
     let mut seen_names = HashSet::new();
     let mut seen_columns = HashSet::new();
     let mut specs = Vec::new();
@@ -566,11 +601,14 @@ pub fn capture_workspace(
 
     for (index, window) in windows.iter().enumerate() {
         let logical = unique_window_name(window, index, &mut seen_names);
-        if window.is_focused {
+        if preferred_focus_window_id
+            .map(|id| id == window.id)
+            .unwrap_or(window.is_focused)
+        {
             focus = Some(logical.clone());
         }
 
-        let cwd = window.pid.and_then(process_cwd);
+        let cwd = window.cwd.clone();
         let title = window.title.clone().unwrap_or_else(|| logical.clone());
         let app_id = window.app_id.clone().unwrap_or_default();
 
@@ -581,19 +619,35 @@ pub fn capture_workspace(
         };
 
         if !window.is_floating {
-            if let Some((output_width, output_height)) = output_size {
-                if seen_columns.insert(placement.column) && output_width > 0.0 {
-                    placement.column_width =
-                        ratio_size(window.tile_width / output_width, 0.05, 1.0);
-                }
-                if column_counts.get(&placement.column).copied().unwrap_or(1) > 1
-                    && output_height > 0.0
-                {
-                    placement.window_height =
-                        ratio_size(window.tile_height / output_height, 0.05, 1.0);
-                }
+            if seen_columns.insert(placement.column) {
+                placement.column_width = pixel_size(window.tile_width);
+            }
+            if column_counts.get(&placement.column).copied().unwrap_or(1) > 1 {
+                placement.window_height = pixel_size(window.tile_height);
             }
         }
+
+        let duplicate_app_id = window
+            .app_id
+            .as_ref()
+            .and_then(|app_id| app_id_counts.get(app_id))
+            .copied()
+            .unwrap_or_default()
+            > 1;
+        let unique_cwd = if duplicate_app_id {
+            window.app_id.as_ref().and_then(|app_id| {
+                cwd.as_ref().and_then(|cwd| {
+                    (app_cwd_counts
+                        .get(&(app_id.clone(), cwd.clone()))
+                        .copied()
+                        .unwrap_or_default()
+                        == 1)
+                        .then(|| format!("^{}$", regex::escape(cwd)))
+                })
+            })
+        } else {
+            None
+        };
 
         let match_spec = MatchSpec {
             window_id: None,
@@ -601,20 +655,14 @@ pub fn capture_workspace(
                 .app_id
                 .as_ref()
                 .map(|value| format!("^{}$", regex::escape(value))),
-            title: capture_title_match(
-                window,
-                window
-                    .app_id
-                    .as_ref()
-                    .and_then(|app_id| app_id_counts.get(app_id))
-                    .copied()
-                    .unwrap_or_default()
-                    > 1,
-            ),
+            title: capture_title_match(window, duplicate_app_id && unique_cwd.is_none()),
             process: None,
+            cwd: unique_cwd,
             pid: None,
         };
 
+        let (include_by_default, inclusion_note) =
+            capture_inclusion(window, project_root.as_deref());
         specs.push(WindowSpec {
             name: logical,
             command: infer_command(window, cwd.as_deref(), &installed_apps),
@@ -622,7 +670,13 @@ pub fn capture_workspace(
             reuse: ReusePolicy::Unique,
             layout: placement,
         });
-        details.push(CapturedWindow { title, app_id, cwd });
+        details.push(CapturedWindow {
+            title,
+            app_id,
+            cwd,
+            include_by_default,
+            inclusion_note,
+        });
     }
 
     Ok(CaptureDraft {
@@ -637,6 +691,282 @@ pub fn capture_workspace(
         },
         details,
     })
+}
+
+fn process_binary_name(window: &RuntimeWindow) -> Option<&str> {
+    window
+        .process_exe
+        .as_deref()
+        .and_then(|exe| Path::new(exe).file_name())
+        .and_then(|name| name.to_str())
+}
+
+fn is_terminal_window(window: &RuntimeWindow) -> bool {
+    let app = window
+        .app_id
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let process = process_binary_name(window)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    [app.as_str(), process.as_str()].iter().any(|value| {
+        value.contains("kitty")
+            || value.contains("alacritty")
+            || value.contains("wezterm")
+            || *value == "foot"
+            || value.contains("konsole")
+            || value.contains("terminal")
+    })
+}
+
+fn is_browser_window(window: &RuntimeWindow) -> bool {
+    let app = window
+        .app_id
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let process = process_binary_name(window)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    [app.as_str(), process.as_str()].iter().any(|value| {
+        value.contains("chrome")
+            || value.contains("chromium")
+            || value.contains("firefox")
+            || value.contains("brave")
+            || value.contains("vivaldi")
+    })
+}
+
+fn is_project_editor_window(window: &RuntimeWindow) -> bool {
+    let app = window
+        .app_id
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let process = process_binary_name(window)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    [app.as_str(), process.as_str()].iter().any(|value| {
+        value == &"code"
+            || value.contains("codium")
+            || value.contains("visual-studio-code")
+            || value.contains("zed")
+            || value.contains("rustrover")
+            || value.contains("clion")
+            || value.contains("pycharm")
+            || value.contains("intellij")
+            || value.contains("idea")
+    })
+}
+
+fn process_references_project(window: &RuntimeWindow, project_root: &Path) -> bool {
+    if let Some(exe) = window.process_exe.as_deref() {
+        let exe = fs::canonicalize(exe).unwrap_or_else(|_| PathBuf::from(exe));
+        if exe.starts_with(project_root) {
+            return true;
+        }
+    }
+
+    let Some(pid) = window.pid else {
+        return false;
+    };
+    process_command_line(pid).into_iter().any(|arg| {
+        if arg.starts_with('-') {
+            return false;
+        }
+        let path = PathBuf::from(&arg);
+        if !path.is_absolute() {
+            return false;
+        }
+        let path = fs::canonicalize(&path).unwrap_or(path);
+        path.starts_with(project_root)
+    })
+}
+
+fn cwd_is_within_project(window: &RuntimeWindow, project_root: &Path) -> bool {
+    let Some(cwd) = window.cwd.as_deref() else {
+        return false;
+    };
+    let cwd = fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
+    cwd.starts_with(project_root)
+}
+
+fn is_kitty_window(window: &RuntimeWindow) -> bool {
+    window
+        .app_id
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .contains("kitty")
+        || process_binary_name(window).is_some_and(|name| name.eq_ignore_ascii_case("kitty"))
+}
+
+fn code_project_path(window: &RuntimeWindow) -> Option<PathBuf> {
+    let pid = window.pid?;
+    let args = process_command_line(pid);
+    let mut take_next_path = false;
+    for arg in args.into_iter().skip(1) {
+        if take_next_path {
+            let path = PathBuf::from(&arg);
+            if path.is_dir() {
+                return fs::canonicalize(&path).ok().or(Some(path));
+            }
+            take_next_path = false;
+        }
+        if matches!(
+            arg.as_str(),
+            "--new-window" | "--reuse-window" | "-n" | "-r"
+        ) {
+            take_next_path = true;
+            continue;
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        let path = PathBuf::from(&arg);
+        if path.is_dir() {
+            return fs::canonicalize(&path).ok().or(Some(path));
+        }
+    }
+    None
+}
+
+fn project_root_from_cwd(cwd: &Path) -> Option<PathBuf> {
+    let markers = [
+        ".git",
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+    ];
+    for ancestor in cwd.ancestors() {
+        if markers.iter().any(|marker| ancestor.join(marker).exists()) {
+            return fs::canonicalize(ancestor)
+                .ok()
+                .or_else(|| Some(ancestor.to_path_buf()));
+        }
+    }
+    None
+}
+
+fn infer_capture_project_root(windows: &[&RuntimeWindow]) -> Option<PathBuf> {
+    for window in windows {
+        let app = window
+            .app_id
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if app == "code" || app.contains("visual-studio-code") {
+            if let Some(path) = code_project_path(window) {
+                return Some(path);
+            }
+        }
+    }
+    windows.iter().find_map(|window| {
+        let cwd = Path::new(window.cwd.as_deref()?);
+        project_root_from_cwd(cwd)
+    })
+}
+
+fn capture_inclusion(
+    window: &RuntimeWindow,
+    project_root: Option<&Path>,
+) -> (bool, Option<String>) {
+    let Some(project_root) = project_root else {
+        return (true, None);
+    };
+
+    if is_terminal_window(window) {
+        if cwd_is_within_project(window, project_root) {
+            return (
+                true,
+                Some("terminal belongs to the detected project".to_owned()),
+            );
+        }
+        return (
+            false,
+            Some(format!(
+                "terminal is outside project {}",
+                project_root.display()
+            )),
+        );
+    }
+
+    if is_project_editor_window(window) {
+        return (
+            true,
+            Some("editor identifies the detected project".to_owned()),
+        );
+    }
+
+    if process_references_project(window, project_root) {
+        return (
+            true,
+            Some(
+                "process executable or launch arguments reference the detected project".to_owned(),
+            ),
+        );
+    }
+
+    if is_browser_window(window) {
+        return (
+            true,
+            Some("browser window on the project workspace; review before saving".to_owned()),
+        );
+    }
+
+    (
+        false,
+        Some(format!(
+            "no project context detected for this app (project {})",
+            project_root.display()
+        )),
+    )
+}
+
+pub fn apply_capture_selection(recipe: &mut Recipe, included: &[bool]) -> Result<()> {
+    if recipe.windows.len() != included.len() {
+        bail!("capture selection does not match detected windows");
+    }
+    let previous = std::mem::take(&mut recipe.windows);
+    recipe.windows = previous
+        .into_iter()
+        .zip(included.iter().copied())
+        .filter_map(|(window, include)| include.then_some(window))
+        .collect();
+    if recipe.windows.is_empty() {
+        bail!("select at least one window to save");
+    }
+
+    let kept_names: HashSet<&str> = recipe
+        .windows
+        .iter()
+        .map(|window| window.name.as_str())
+        .collect();
+    if recipe
+        .focus
+        .as_deref()
+        .is_some_and(|focus| !kept_names.contains(focus))
+    {
+        recipe.focus = None;
+    }
+
+    let mut columns = BTreeMap::<usize, usize>::new();
+    let mut next_column = 1usize;
+    for window in &mut recipe.windows {
+        if window.layout.floating {
+            continue;
+        }
+        let old = window.layout.column;
+        let new = *columns.entry(old).or_insert_with(|| {
+            let current = next_column;
+            next_column += 1;
+            current
+        });
+        window.layout.column = new;
+    }
+    Ok(())
 }
 
 fn capture_title_match(window: &RuntimeWindow, duplicate_app_id: bool) -> Option<String> {
@@ -656,11 +986,11 @@ fn capture_title_match(window: &RuntimeWindow, duplicate_app_id: bool) -> Option
     Some(format!("^{}$", regex::escape(title)))
 }
 
-fn ratio_size(value: f64, min: f64, max: f64) -> Option<Size> {
-    if !value.is_finite() {
+fn pixel_size(value: f64) -> Option<Size> {
+    if !value.is_finite() || value < 1.0 || value > f64::from(i32::MAX) {
         return None;
     }
-    Some(Size::Percent(value.clamp(min, max)))
+    Some(Size::Pixels(value.round() as i32))
 }
 
 fn unique_window_name(window: &RuntimeWindow, index: usize, used: &mut HashSet<String>) -> String {
@@ -701,12 +1031,6 @@ pub fn unique_slug(value: &str) -> String {
     out.trim_matches('-').to_owned()
 }
 
-fn process_cwd(pid: i32) -> Option<String> {
-    fs::read_link(format!("/proc/{pid}/cwd"))
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
-}
-
 fn infer_command(
     window: &RuntimeWindow,
     cwd: Option<&str>,
@@ -720,7 +1044,7 @@ fn infer_command(
     let title = window.title.as_deref().unwrap_or_default();
     let installed = resolve_installed_app_from(installed_apps, &app);
 
-    if app.contains("kitty") {
+    if is_kitty_window(window) {
         let mut command = installed
             .map(|app| app.command.clone())
             .unwrap_or_else(|| vec!["kitty".to_owned()]);
@@ -743,10 +1067,11 @@ fn infer_command(
             .map(|app| app.command.clone())
             .unwrap_or_else(|| vec!["code".to_owned()]);
         command.push("--new-window".to_owned());
-        if let Some(cwd) = cwd {
-            if env::var_os("HOME").as_deref() != Some(std::ffi::OsStr::new(cwd)) {
-                command.push(cwd.to_owned());
-            }
+        let project = code_project_path(window)
+            .or_else(|| cwd.map(PathBuf::from))
+            .filter(|path| env::var_os("HOME").as_deref() != Some(path.as_os_str()));
+        if let Some(project) = project {
+            command.push(project.to_string_lossy().into_owned());
         }
         return command;
     }
@@ -814,15 +1139,25 @@ fn infer_chrome_command(window: &RuntimeWindow, installed: Option<&InstalledApp>
     command
 }
 
+fn decode_process_command_line(bytes: &[u8]) -> Vec<String> {
+    let parts = bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect::<Vec<_>>();
+
+    if parts.len() == 1 && parts[0].chars().any(char::is_whitespace) {
+        shlex::split(&parts[0]).unwrap_or(parts)
+    } else {
+        parts
+    }
+}
+
 fn process_command_line(pid: i32) -> Vec<String> {
     let Ok(bytes) = fs::read(format!("/proc/{pid}/cmdline")) else {
         return Vec::new();
     };
-    bytes
-        .split(|byte| *byte == 0)
-        .filter(|part| !part.is_empty())
-        .map(|part| String::from_utf8_lossy(part).into_owned())
-        .collect()
+    decode_process_command_line(&bytes)
 }
 
 fn chrome_user_data_root(
@@ -944,6 +1279,54 @@ fn executable_in_path(name: &str) -> bool {
     env::split_paths(&path)
         .map(|directory| directory.join(name))
         .any(|candidate| candidate.is_file())
+}
+
+fn recipe_identity(recipe: &Recipe) -> (&str, &str) {
+    (
+        recipe.name.as_deref().unwrap_or(&recipe.workspace),
+        &recipe.workspace,
+    )
+}
+
+pub fn upsert_captured_recipe(config: &mut Config, recipe: Recipe) -> (String, usize) {
+    let (display_name, workspace) = recipe_identity(&recipe);
+    let display_name = display_name.to_owned();
+    let workspace = workspace.to_owned();
+
+    let mut duplicate_keys: Vec<String> = config
+        .workbench
+        .iter()
+        .filter(|(_, existing)| {
+            let (existing_name, existing_workspace) = recipe_identity(existing);
+            existing_name == display_name && existing_workspace == workspace
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    duplicate_keys.sort();
+    let replaced = duplicate_keys.len();
+
+    if let Some(primary) = duplicate_keys.first().cloned() {
+        for key in duplicate_keys.iter().skip(1) {
+            config.workbench.remove(key);
+        }
+        config.workbench.insert(primary.clone(), recipe);
+        return (primary, replaced);
+    }
+
+    let raw_base = unique_slug(&display_name);
+    let base = if raw_base.is_empty() {
+        "workbench".to_owned()
+    } else {
+        raw_base
+    };
+    let mut key = base.clone();
+    let mut suffix = 2usize;
+    while config.workbench.contains_key(&key) {
+        key = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    config.workbench.insert(key.clone(), recipe);
+    (key, replaced)
 }
 
 pub fn icon_name(spec: &WindowSpec) -> String {
@@ -1215,6 +1598,81 @@ pub fn set_column_display(recipe: &mut Recipe, column: usize, display: Option<Co
 mod editor_tests {
     use super::*;
 
+    fn one_window_focus_recipe() -> Recipe {
+        Recipe {
+            name: Some("focus-test".to_owned()),
+            workspace: "Dev".to_owned(),
+            output: None,
+            output_fallback: OutputFallback::Focused,
+            focus: Some("editor".to_owned()),
+            spawn_timeout_ms: 10_000,
+            windows: vec![window("editor", 1)],
+        }
+    }
+
+    fn one_window_focus_state(focused_app_id: &str, focused_id: u64) -> ObservedState {
+        ObservedState {
+            windows: vec![
+                RuntimeWindow {
+                    id: 1,
+                    title: Some("editor".into()),
+                    app_id: Some("editor".into()),
+                    pid: None,
+                    process_exe: None,
+                    cwd: None,
+                    workspace_id: Some(1),
+                    is_focused: focused_id == 1,
+                    is_floating: false,
+                    column: Some(1),
+                    tile_index: Some(1),
+                    tile_width: 800.0,
+                    tile_height: 600.0,
+                },
+                RuntimeWindow {
+                    id: focused_id,
+                    title: Some("other".into()),
+                    app_id: Some(focused_app_id.into()),
+                    pid: None,
+                    process_exe: None,
+                    cwd: None,
+                    workspace_id: Some(1),
+                    is_focused: true,
+                    is_floating: true,
+                    column: None,
+                    tile_index: None,
+                    tile_width: 500.0,
+                    tile_height: 400.0,
+                },
+            ],
+            workspaces: vec![workbench_core::RuntimeWorkspace {
+                id: 1,
+                index: 1,
+                name: Some("Dev".into()),
+                output: None,
+                is_active: true,
+                is_focused: true,
+            }],
+            outputs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn ui_focus_does_not_make_an_otherwise_converged_recipe_look_broken() {
+        let recipe = one_window_focus_recipe();
+        let state = one_window_focus_state("dev.t1ktak.NiriWorkbench", 99);
+        assert_eq!(recipe_status(&recipe, Some(&state)), RecipeStatus::Ready);
+    }
+
+    #[test]
+    fn non_ui_focus_drift_is_still_reported() {
+        let recipe = one_window_focus_recipe();
+        let state = one_window_focus_state("unrelated-app", 99);
+        assert_eq!(
+            recipe_status(&recipe, Some(&state)),
+            RecipeStatus::LayoutChanged
+        );
+    }
+
     #[test]
     fn parses_flatpak_desktop_entry_for_real_window_identity() {
         let desktop = r#"
@@ -1273,6 +1731,7 @@ X-Flatpak=com.google.Chrome
             app_id: app_id.map(str::to_owned),
             pid: None,
             process_exe: None,
+            cwd: None,
             workspace_id: Some(1),
             is_focused: false,
             is_floating: false,
@@ -1305,6 +1764,227 @@ X-Flatpak=com.google.Chrome
             capture_title_match(&window, false).as_deref(),
             Some("^Untyped window$")
         );
+    }
+
+    #[test]
+    fn capture_records_observed_sizes_in_logical_pixels() {
+        let mut state = ObservedState::default();
+        state.workspaces.push(workbench_core::RuntimeWorkspace {
+            id: 1,
+            index: 1,
+            name: Some("Dev".into()),
+            output: Some("eDP-1".into()),
+            is_active: true,
+            is_focused: true,
+        });
+        let mut window = runtime_window(Some("code"), "project");
+        window.tile_width = 827.4;
+        window.tile_height = 1030.0;
+        state.windows.push(window);
+
+        let captured = capture_workspace(&state, None, None).unwrap();
+        assert_eq!(
+            captured.recipe.windows[0].layout.column_width,
+            Some(Size::Pixels(827))
+        );
+        assert_eq!(captured.recipe.windows[0].layout.window_height, None);
+    }
+
+    #[test]
+    fn app_on_another_workspace_still_forces_disambiguating_title() {
+        let mut state = ObservedState::default();
+        state.workspaces.extend([
+            workbench_core::RuntimeWorkspace {
+                id: 1,
+                index: 1,
+                name: Some("Dev".into()),
+                output: None,
+                is_active: true,
+                is_focused: true,
+            },
+            workbench_core::RuntimeWorkspace {
+                id: 2,
+                index: 2,
+                name: Some("Other".into()),
+                output: None,
+                is_active: false,
+                is_focused: false,
+            },
+        ]);
+        let mut docs = runtime_window(Some("google-chrome"), "Docs - Google Chrome");
+        docs.id = 1;
+        docs.workspace_id = Some(1);
+        let mut chat = runtime_window(Some("google-chrome"), "Chat - Google Chrome");
+        chat.id = 2;
+        chat.workspace_id = Some(2);
+        state.windows = vec![docs, chat];
+
+        let captured = capture_workspace(&state, Some(1), None).unwrap();
+        assert_eq!(captured.recipe.windows.len(), 1);
+        assert_eq!(
+            captured.recipe.windows[0].match_spec.title.as_deref(),
+            Some(r"^Docs \- Google Chrome$")
+        );
+    }
+
+    #[test]
+    fn duplicate_app_capture_prefers_unique_cwd_over_title() {
+        let mut state = ObservedState::default();
+        state.workspaces.push(workbench_core::RuntimeWorkspace {
+            id: 1,
+            index: 1,
+            name: Some("Dev".into()),
+            output: None,
+            is_active: true,
+            is_focused: true,
+        });
+        let mut left = runtime_window(Some("kitty"), "changing title a");
+        left.id = 1;
+        left.cwd = Some("/home/user/project-a".into());
+        left.column = Some(1);
+        let mut right = runtime_window(Some("kitty"), "changing title b");
+        right.id = 2;
+        right.cwd = Some("/home/user/project-b".into());
+        right.column = Some(2);
+        state.windows = vec![left, right];
+
+        let captured = capture_workspace(&state, None, None).unwrap();
+        assert_eq!(captured.recipe.windows[0].match_spec.title, None);
+        assert_eq!(
+            captured.recipe.windows[0].match_spec.cwd.as_deref(),
+            Some(r"^/home/user/project\-a$")
+        );
+        assert_eq!(captured.recipe.windows[1].match_spec.title, None);
+        assert_eq!(
+            captured.recipe.windows[1].match_spec.cwd.as_deref(),
+            Some(r"^/home/user/project\-b$")
+        );
+    }
+
+    #[test]
+    fn capture_upsert_replaces_duplicate_cards() {
+        let mut config = Config {
+            workbench: BTreeMap::new(),
+        };
+        let original = recipe();
+        config.workbench.insert("test".into(), original.clone());
+        config.workbench.insert("test-2".into(), original.clone());
+        let mut replacement = original.clone();
+        replacement.windows.pop();
+
+        let (key, replaced) = upsert_captured_recipe(&mut config, replacement.clone());
+        assert_eq!(key, "test");
+        assert_eq!(replaced, 2);
+        assert_eq!(config.workbench.len(), 1);
+        assert_eq!(config.workbench.get("test"), Some(&replacement));
+    }
+
+    #[test]
+    fn custom_kitty_class_recreates_class_title_and_cwd() {
+        let mut window = runtime_window(Some("nwb-project-terminal"), "project terminal");
+        window.process_exe = Some("/usr/bin/kitty".into());
+        window.cwd = Some("/home/user/project".into());
+        let command = infer_command(&window, window.cwd.as_deref(), &[]);
+        assert_eq!(
+            command,
+            vec![
+                "kitty".to_owned(),
+                "--class".to_owned(),
+                "nwb-project-terminal".to_owned(),
+                "--title".to_owned(),
+                "project terminal".to_owned(),
+                "--directory".to_owned(),
+                "/home/user/project".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_detection_uses_process_executable_for_custom_classes() {
+        let mut window = runtime_window(Some("project-shell"), "shell");
+        window.process_exe = Some("/usr/bin/kitty".into());
+        assert!(is_terminal_window(&window));
+        assert!(is_kitty_window(&window));
+    }
+
+    #[test]
+    fn electron_style_single_string_cmdline_is_split() {
+        assert_eq!(
+            decode_process_command_line(b"/usr/share/code/code --new-window /home/user/project\0"),
+            vec![
+                "/usr/share/code/code".to_owned(),
+                "--new-window".to_owned(),
+                "/home/user/project".to_owned(),
+            ]
+        );
+        assert_eq!(
+            decode_process_command_line(b"code\0--new-window\0/home/user/project\0"),
+            vec![
+                "code".to_owned(),
+                "--new-window".to_owned(),
+                "/home/user/project".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_selection_removes_windows_and_compacts_columns() {
+        let mut recipe = recipe();
+        recipe.windows[0].layout.column = 1;
+        recipe.windows[1].layout.column = 3;
+        recipe.windows[2].layout.column = 4;
+        recipe.focus = Some("editor".into());
+
+        apply_capture_selection(&mut recipe, &[true, false, true]).unwrap();
+        assert_eq!(recipe.windows.len(), 2);
+        assert_eq!(recipe.windows[0].layout.column, 1);
+        assert_eq!(recipe.windows[1].layout.column, 2);
+        assert_eq!(recipe.focus.as_deref(), Some("editor"));
+    }
+
+    #[test]
+    fn unrelated_non_project_app_is_excluded_when_project_is_known() {
+        let root = Path::new("/home/user/project");
+        let mut system_app = runtime_window(Some("org.pulseaudio.pavucontrol"), "Volume Control");
+        system_app.cwd = Some("/home/user/project".into());
+        system_app.process_exe = Some("/usr/bin/pavucontrol".into());
+        assert!(!capture_inclusion(&system_app, Some(root)).0);
+    }
+
+    #[test]
+    fn project_local_executable_is_included() {
+        let root = Path::new("/home/user/project");
+        let mut app = runtime_window(Some("project-preview"), "Project preview");
+        app.cwd = Some("/home/user/project".into());
+        app.process_exe = Some("/home/user/project/target/debug/project-preview".into());
+        assert!(capture_inclusion(&app, Some(root)).0);
+    }
+
+    #[test]
+    fn browser_is_kept_as_reviewable_project_companion() {
+        let root = Path::new("/home/user/project");
+        let mut browser = runtime_window(Some("google-chrome"), "Docs - Google Chrome");
+        browser.cwd = Some("/home/user".into());
+        assert!(capture_inclusion(&browser, Some(root)).0);
+    }
+
+    #[test]
+    fn generic_workspace_without_project_root_keeps_windows() {
+        let mut steam = runtime_window(Some("steam"), "Steam");
+        steam.cwd = Some("/home/user".into());
+        assert!(capture_inclusion(&steam, None).0);
+    }
+
+    #[test]
+    fn project_terminal_is_included_but_unrelated_terminal_is_not() {
+        let root = Path::new("/home/user/project");
+        let mut project = runtime_window(Some("kitty"), "project shell");
+        project.cwd = Some("/home/user/project".into());
+        let mut unrelated = runtime_window(Some("Alacritty"), "other shell");
+        unrelated.cwd = Some("/tmp/other".into());
+
+        assert!(capture_inclusion(&project, Some(root)).0);
+        assert!(!capture_inclusion(&unrelated, Some(root)).0);
     }
 
     #[test]

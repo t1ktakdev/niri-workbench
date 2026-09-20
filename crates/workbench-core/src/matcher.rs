@@ -11,6 +11,7 @@ pub struct CompiledMatcher {
     app_id: Option<Regex>,
     title: Option<Regex>,
     process: Option<Regex>,
+    cwd: Option<Regex>,
     pid: Option<i32>,
 }
 
@@ -22,6 +23,7 @@ pub struct Candidate {
     pub title: Option<String>,
     pub pid: Option<i32>,
     pub process_exe: Option<String>,
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +51,7 @@ impl CompiledMatcher {
             app_id: compile("app_id", spec.app_id.as_deref())?,
             title: compile("title", spec.title.as_deref())?,
             process: compile("process", spec.process.as_deref())?,
+            cwd: compile("cwd", spec.cwd.as_deref())?,
             pid: spec.pid,
         })
     }
@@ -81,6 +84,13 @@ impl CompiledMatcher {
                 return None;
             }
             score += 25;
+        }
+        if let Some(regex) = &self.cwd {
+            let value = window.cwd.as_deref()?;
+            if !regex.is_match(value) {
+                return None;
+            }
+            score += 35;
         }
         if let Some(pid) = self.pid {
             if window.pid != Some(pid) {
@@ -115,6 +125,7 @@ pub fn choose_candidate(
                     title: window.title.clone(),
                     pid: window.pid,
                     process_exe: window.process_exe.clone(),
+                    cwd: window.cwd.clone(),
                 }
             })
         })
@@ -162,6 +173,7 @@ mod tests {
             app_id: Some(app_id.into()),
             pid: Some(id as i32),
             process_exe: None,
+            cwd: None,
             workspace_id: Some(1),
             is_focused: false,
             is_floating: false,
@@ -181,6 +193,7 @@ mod tests {
                 app_id: Some("^google-chrome$".into()),
                 title: title.map(str::to_owned),
                 process: None,
+                cwd: None,
                 pid: None,
             },
             reuse: ReusePolicy::Unique,
@@ -206,6 +219,20 @@ mod tests {
         ];
         let decision =
             choose_candidate(&spec(Some("docs\\.rs")), &windows, &HashSet::new(), None).unwrap();
+        assert!(matches!(decision, CandidateDecision::One(candidate) if candidate.id == 2));
+    }
+
+    #[test]
+    fn cwd_disambiguates_same_app_and_title_family() {
+        let mut left = window(1, "kitty", "shell");
+        left.cwd = Some("/home/user/project-a".into());
+        let mut right = window(2, "kitty", "shell");
+        right.cwd = Some("/home/user/project-b".into());
+        let mut spec = spec(None);
+        spec.command = vec!["kitty".into()];
+        spec.match_spec.app_id = Some("^kitty$".into());
+        spec.match_spec.cwd = Some("^/home/user/project\\-b$".into());
+        let decision = choose_candidate(&spec, &[left, right], &HashSet::new(), None).unwrap();
         assert!(matches!(decision, CandidateDecision::One(candidate) if candidate.id == 2));
     }
 

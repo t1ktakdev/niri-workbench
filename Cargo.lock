@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "niri-workbench"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "niri-workbench-ui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "gtk4",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "workbench-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "regex",
  "serde",
@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "workbench-niri"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "niri-ipc",
  "serde_json",

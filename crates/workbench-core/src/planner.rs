@@ -422,7 +422,10 @@ fn size_matches(
     };
     let tolerance = match size {
         Size::Pixels(_) => 2.0,
-        Size::Percent(_) => expected.mul_add(0.05, 2.0).max(8.0),
+        Size::Percent(_) => {
+            let working_area_tolerance = if width { 0.12 } else { 0.18 };
+            expected.mul_add(working_area_tolerance, 2.0).max(8.0)
+        }
     };
     (actual - expected).abs() <= tolerance
 }
@@ -480,6 +483,7 @@ mod tests {
             app_id: Some(format!("w{id}")),
             pid: None,
             process_exe: None,
+            cwd: None,
             workspace_id: Some(7),
             is_focused: id == 1,
             is_floating: false,
@@ -527,6 +531,39 @@ mod tests {
         let plan = build_reconcile_plan(&r, &observed, &ids, 7, false);
 
         assert!(plan.is_noop());
+    }
+
+    #[test]
+    fn percentage_width_accepts_niri_working_area_reduction() {
+        let mut a = spec("a", 1);
+        a.layout.column_width = Some(Size::Percent(0.28));
+        let mut r = recipe(vec![a]);
+        r.focus = None;
+        let mut actual = window(1, 1, 1);
+        actual.tile_width = 505.0;
+        let observed = state(vec![actual]);
+        let ids = BTreeMap::from([("a".into(), 1)]);
+
+        assert!(build_reconcile_plan(&r, &observed, &ids, 7, false).is_noop());
+    }
+
+    #[test]
+    fn percentage_width_still_rejects_large_drift() {
+        let mut a = spec("a", 1);
+        a.layout.column_width = Some(Size::Percent(0.28));
+        let mut r = recipe(vec![a]);
+        r.focus = None;
+        let mut actual = window(1, 1, 1);
+        actual.tile_width = 400.0;
+        let observed = state(vec![actual]);
+        let ids = BTreeMap::from([("a".into(), 1)]);
+
+        assert!(matches!(
+            build_reconcile_plan(&r, &observed, &ids, 7, false)
+                .actions
+                .as_slice(),
+            [Action::SetColumnWidth { .. }]
+        ));
     }
 
     #[test]

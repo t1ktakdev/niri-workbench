@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format is based on Keep a Changelog. The project does not promise a stable
 configuration or library API before 1.0.
 
+## [0.2.1] - 2026-09-20
+
+### Fixed
+
+- Reworked **Save current** around the real Niri session instead of assuming a pre-cleaned workspace. Capture now shows an explicit include toggle per detected window and excludes unrelated project-external terminals and unknown system apps by default when a project root is known.
+- Preserved an existing workbench key when saving the same named Niri workspace again, so repeated snapshots update one card instead of creating duplicate recipes or breaking CLI references.
+- Fixed VS Code capture when Electron rewrites `/proc/<pid>/cmdline` into a single string; project folders now restore from the actual launch target instead of an unrelated process working directory.
+- Fixed custom Kitty windows by reproducing their class, title, and working directory, including terminals whose custom app ID does not contain `kitty`.
+- Made captured matchers consider all Niri windows, not only the target workspace, so a Chrome window cannot accidentally reuse or move another Chrome window from a different workspace.
+- Preserved the external focused window across opening Workbench and stopped the Workbench window itself from making an otherwise converged recipe appear broken.
+- Fixed clean first-run CLI behavior: an absent config is treated as an empty library, and `doctor` reports that state without creating a file or failing.
+
+### Changed
+
+- Chrome capture keeps the detected profile and current page URL when available, while documenting that browser tab history and arbitrary application memory are outside snapshot guarantees.
+- Home and Library **Open/Repair** buttons now use named GTK window actions, sharing the exact same execution path used by automated UI verification.
+- Captured tile sizes remain based on observed Niri logical pixels and selected-window columns are compacted after exclusions.
+
 ## [0.2.0] - 2026-09-20
 
 ### Added

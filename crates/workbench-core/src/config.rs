@@ -157,6 +157,7 @@ fn validate_recipe(name: &str, recipe: &Recipe) -> Result<(), ConfigError> {
             && window.match_spec.app_id.is_none()
             && window.match_spec.title.is_none()
             && window.match_spec.process.is_none()
+            && window.match_spec.cwd.is_none()
             && window.match_spec.pid.is_none()
         {
             return Err(validation(
@@ -168,6 +169,7 @@ fn validate_recipe(name: &str, recipe: &Recipe) -> Result<(), ConfigError> {
             ("app_id", window.match_spec.app_id.as_deref()),
             ("title", window.match_spec.title.as_deref()),
             ("process", window.match_spec.process.as_deref()),
+            ("cwd", window.match_spec.cwd.as_deref()),
         ] {
             if let Some(pattern) = value {
                 Regex::new(pattern).map_err(|err| {

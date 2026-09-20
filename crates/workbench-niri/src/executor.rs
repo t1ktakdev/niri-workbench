@@ -313,7 +313,7 @@ pub async fn execute_action(session: &NiriSession, action: &Action) -> Result<()
 fn size_change(size: Size) -> SizeChange {
     match size {
         Size::Pixels(px) => SizeChange::SetFixed(px),
-        Size::Percent(ratio) => SizeChange::SetProportion(ratio),
+        Size::Percent(ratio) => SizeChange::SetProportion(ratio * 100.0),
     }
 }
 
@@ -494,5 +494,21 @@ pub fn format_action(action: &Action) -> String {
             ..
         } => format!("DISPLAY {name:<12} column {column} -> {display:?}"),
         Action::Focus { name, .. } => format!("FOCUS   {name}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use niri_ipc::SizeChange;
+    use workbench_core::Size;
+
+    use super::size_change;
+
+    #[test]
+    fn percentage_size_uses_niri_percent_units() {
+        assert_eq!(
+            size_change(Size::Percent(0.45)),
+            SizeChange::SetProportion(45.0)
+        );
     }
 }

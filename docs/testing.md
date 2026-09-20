@@ -69,3 +69,10 @@ cargo build --release --locked
 
 Also run `niri-workbench doctor` and a read-only `plan` against the target
 Niri session.
+## v0.2.1 real-session regression
+
+The 0.2.1 candidate was exercised through the same GTK actions used by the UI on a live Niri 26.04 session. A `Dev` workspace contained VS Code, a Chrome documentation window and a custom-class Kitty project terminal, plus unrelated Alacritty and PulseAudio Volume Control windows. **Save current** kept exactly the three project windows and excluded the unrelated windows.
+
+The three saved windows were then closed. Activating the Library `open-workbench` action restored VS Code with the project path, Chrome with the captured profile and page URL, and Kitty with its class, title and project working directory. The unrelated windows stayed open and were not moved into the recipe. The final focus returned to VS Code, `status` reported the observable layout converged, and a second Open created no duplicate windows.
+
+A separate clean-prefix test installed both binaries and the desktop file under `/tmp`, ran `list` and `doctor` with an absent config, launched the GTK Library with an empty `XDG_CONFIG_HOME`, and then removed the temporary installation with `uninstall.sh`. No user config was required or created by the read-only first run.

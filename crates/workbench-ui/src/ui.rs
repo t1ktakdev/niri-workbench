@@ -12,6 +12,7 @@ use regex::Regex;
 use adw::prelude::*;
 use gtk::glib;
 use gtk::glib::value::ToValue;
+use gtk::glib::variant::{StaticVariantType, ToVariant};
 use workbench_core::{
     ColumnDisplay, Config, MatchSpec, PlacementSpec, Recipe, ReusePolicy, Size, WindowSpec,
 };
@@ -192,6 +193,7 @@ struct UiState {
     config: RefCell<Config>,
     language: Cell<Language>,
     capture_workspace_id: Cell<Option<u64>>,
+    capture_focus_window_id: Cell<Option<u64>>,
     load_error: RefCell<Option<String>>,
     editor_guard: RefCell<Option<EditorGuard>>,
     allow_close: Cell<bool>,
@@ -274,9 +276,17 @@ pub fn build_main_window(app: &adw::Application, start_page: Option<StartPage>) 
         ),
     };
 
-    let capture_workspace_id = state::niri_snapshot()
-        .ok()
+    let capture_snapshot = state::niri_snapshot().ok();
+    let capture_workspace_id = capture_snapshot
+        .as_ref()
         .and_then(|snapshot| snapshot.focused_workspace().map(|workspace| workspace.id));
+    let capture_focus_window_id = capture_snapshot.as_ref().and_then(|snapshot| {
+        snapshot
+            .windows
+            .iter()
+            .find(|window| window.is_focused)
+            .map(|window| window.id)
+    });
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -302,12 +312,74 @@ pub fn build_main_window(app: &adw::Application, start_page: Option<StartPage>) 
         config: RefCell::new(config),
         language: Cell::new(language),
         capture_workspace_id: Cell::new(capture_workspace_id),
+        capture_focus_window_id: Cell::new(capture_focus_window_id),
         load_error: RefCell::new(load_error),
         editor_guard: RefCell::new(None),
         allow_close: Cell::new(false),
     });
 
     LIVE_STATES.with(|states| states.borrow_mut().push(Rc::clone(&state)));
+
+    {
+        let parameter_type = String::static_variant_type();
+        let action = gtk::gio::SimpleAction::new("open-workbench", Some(parameter_type.as_ref()));
+        let weak = Rc::downgrade(&state);
+        action.connect_activate(move |_, parameter| {
+            let Some(key) = parameter.and_then(|value| value.get::<String>()) else {
+                return;
+            };
+            if let Some(state) = weak.upgrade() {
+                run_cli_with_feedback(&state, "open", key);
+            }
+        });
+        state.window.add_action(&action);
+    }
+
+    {
+        let parameter_type = String::static_variant_type();
+        let action = gtk::gio::SimpleAction::new("repair-workbench", Some(parameter_type.as_ref()));
+        let weak = Rc::downgrade(&state);
+        action.connect_activate(move |_, parameter| {
+            let Some(key) = parameter.and_then(|value| value.get::<String>()) else {
+                return;
+            };
+            if let Some(state) = weak.upgrade() {
+                run_cli_with_feedback(&state, "repair", key);
+            }
+        });
+        state.window.add_action(&action);
+    }
+
+    {
+        let weak = Rc::downgrade(&state);
+        state.window.connect_is_active_notify(move |window| {
+            if window.is_active() {
+                return;
+            }
+            let weak = weak.clone();
+            glib::timeout_add_local_once(Duration::from_millis(80), move || {
+                let Some(state) = weak.upgrade() else {
+                    return;
+                };
+                let Ok(snapshot) = state::niri_snapshot() else {
+                    return;
+                };
+                let Some(focused) = snapshot.windows.iter().find(|window| {
+                    window.is_focused
+                        && !window
+                            .app_id
+                            .as_deref()
+                            .unwrap_or_default()
+                            .starts_with("dev.t1ktak.NiriWorkbench")
+                }) else {
+                    return;
+                };
+                state.capture_workspace_id.set(focused.workspace_id);
+                state.capture_focus_window_id.set(Some(focused.id));
+            });
+        });
+    }
+
     let weak = Rc::downgrade(&state);
     state.window.connect_close_request(move |_| {
         let Some(state) = weak.upgrade() else {
@@ -756,8 +828,16 @@ fn show_settings(state: &Rc<UiState>) {
 
 fn replace_page(state: &Rc<UiState>, name: &str, page: &impl IsA<gtk::Widget>) {
     let editing = name == "editor";
+    let capturing = name == "capture";
     for button in state.nav.borrow().values() {
         button.set_sensitive(!editing);
+    }
+
+    if !capturing {
+        state.window.remove_action("save-capture");
+        if let Some(app) = state.window.application() {
+            app.set_accels_for_action("win.save-capture", &[]);
+        }
     }
 
     if !editing {
@@ -1120,28 +1200,16 @@ fn build_workbench_card(
         RecipeStatus::LayoutChanged => {
             let repair = action_button("wrench-symbolic", tr(language, "repair"), false);
             repair.add_css_class("repair-action");
-            let weak = Rc::downgrade(state);
-            let key_owned = key.to_owned();
-            repair.connect_clicked(move |_| {
-                let Some(state) = weak.upgrade() else {
-                    return;
-                };
-                run_cli_with_feedback(&state, "repair", key_owned.clone());
-            });
+            repair.set_action_name(Some("win.repair-workbench"));
+            repair.set_action_target_value(Some(&key.to_variant()));
             actions.append(&repair);
         }
         RecipeStatus::Ambiguous | RecipeStatus::Offline => {}
         RecipeStatus::Ready | RecipeStatus::Missing(_) => {
             let open = action_button("media-playback-start-symbolic", tr(language, "open"), true);
             open.add_css_class("home-primary-action");
-            let weak = Rc::downgrade(state);
-            let key_owned = key.to_owned();
-            open.connect_clicked(move |_| {
-                let Some(state) = weak.upgrade() else {
-                    return;
-                };
-                run_cli_with_feedback(&state, "open", key_owned.clone());
-            });
+            open.set_action_name(Some("win.open-workbench"));
+            open.set_action_target_value(Some(&key.to_variant()));
             actions.append(&open);
         }
     }
@@ -1245,24 +1313,14 @@ fn build_library(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             RecipeStatus::Ready | RecipeStatus::Missing(_) => {
                 let open =
                     action_button("media-playback-start-symbolic", tr(language, "open"), true);
-                let weak = Rc::downgrade(state);
-                let key_owned = key.clone();
-                open.connect_clicked(move |_| {
-                    if let Some(state) = weak.upgrade() {
-                        run_cli_with_feedback(&state, "open", key_owned.clone());
-                    }
-                });
+                open.set_action_name(Some("win.open-workbench"));
+                open.set_action_target_value(Some(&key.to_variant()));
                 actions.append(&open);
             }
             RecipeStatus::LayoutChanged => {
                 let repair = action_button("wrench-symbolic", tr(language, "repair"), true);
-                let weak = Rc::downgrade(state);
-                let key_owned = key.clone();
-                repair.connect_clicked(move |_| {
-                    if let Some(state) = weak.upgrade() {
-                        run_cli_with_feedback(&state, "repair", key_owned.clone());
-                    }
-                });
+                repair.set_action_name(Some("win.repair-workbench"));
+                repair.set_action_target_value(Some(&key.to_variant()));
                 actions.append(&repair);
             }
             RecipeStatus::Ambiguous | RecipeStatus::Offline => {}
@@ -1847,7 +1905,11 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             );
         }
     };
-    let draft = match state::capture_workspace(&snapshot, state.capture_workspace_id.get()) {
+    let mut draft = match state::capture_workspace(
+        &snapshot,
+        state.capture_workspace_id.get(),
+        state.capture_focus_window_id.get(),
+    ) {
         Ok(draft) => draft,
         Err(error) => {
             return error_page(
@@ -1858,6 +1920,22 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             );
         }
     };
+    let existing_name = {
+        let config = state.config.borrow();
+        let mut matches = config
+            .workbench
+            .values()
+            .filter(|recipe| recipe.workspace == draft.recipe.workspace);
+        let first = matches.next().map(|recipe| recipe.name.clone());
+        if matches.next().is_none() {
+            first.flatten()
+        } else {
+            None
+        }
+    };
+    if let Some(existing_name) = existing_name {
+        draft.recipe.name = Some(existing_name);
+    }
     let draft = Rc::new(RefCell::new(draft));
     let capture_errors: ValidationErrors = Rc::new(RefCell::new(HashMap::new()));
 
@@ -1885,6 +1963,11 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
         tr(language, "create_workbench"),
         true,
     );
+    create.set_tooltip_text(Some(if language == Language::Ru {
+        "Сохранить снимок · Ctrl+S"
+    } else {
+        "Save snapshot · Ctrl+S"
+    }));
     header.append(&create);
     page.append(&header);
 
@@ -1920,6 +2003,8 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
     page.append(&detected_header);
 
     let command_entries: Rc<RefCell<Vec<(usize, gtk::Entry)>>> = Rc::new(RefCell::new(Vec::new()));
+    let include_buttons: Rc<RefCell<Vec<(usize, gtk::CheckButton)>>> =
+        Rc::new(RefCell::new(Vec::new()));
     let windows_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
 
     {
@@ -1952,7 +2037,33 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             meta_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             meta_label.add_css_class("subtitle");
             labels.append(&meta_label);
+            if let Some(note) = &detail.inclusion_note {
+                let note_label = gtk::Label::new(Some(note));
+                note_label.set_xalign(0.0);
+                note_label.set_wrap(true);
+                note_label.add_css_class("subtitle");
+                labels.append(&note_label);
+            }
             row.append(&labels);
+
+            let include = gtk::CheckButton::with_label(if language == Language::Ru {
+                "В снимок"
+            } else {
+                "Include"
+            });
+            include.set_active(detail.include_by_default);
+            include.set_tooltip_text(Some(if detail.include_by_default {
+                if language == Language::Ru {
+                    "Это окно будет сохранено"
+                } else {
+                    "This window will be saved"
+                }
+            } else if language == Language::Ru {
+                "Workbench считает это окно посторонним; включи вручную, если оно нужно"
+            } else {
+                "Workbench considers this window unrelated; enable it if you want it saved"
+            }));
+            row.append(&include);
 
             let launch = gtk::Box::new(gtk::Orientation::Vertical, 6);
             launch.set_hexpand(true);
@@ -1999,6 +2110,7 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             row.append(&launch);
 
             command_entries.borrow_mut().push((index, command));
+            include_buttons.borrow_mut().push((index, include));
             windows_box.append(&row);
         }
     }
@@ -2108,19 +2220,66 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
     preview_title.set_hexpand(true);
     preview_title.set_xalign(0.0);
     preview_header.append(&preview_title);
+    let selected_initial = include_buttons
+        .borrow()
+        .iter()
+        .filter(|(_, button)| button.is_active())
+        .count();
     let detected_count = gtk::Label::new(Some(&format!(
         "{} {}",
-        draft.borrow().recipe.windows.len(),
+        selected_initial,
         if language == Language::Ru {
-            "окон"
+            "будет сохранено"
         } else {
-            "windows"
+            "will be saved"
         }
     )));
     detected_count.add_css_class("subtitle");
     preview_header.append(&detected_count);
     preview_card.append(&preview_header);
-    preview_card.append(&build_capture_preview(&draft.borrow().recipe));
+
+    let preview_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    {
+        let mut preview_recipe = draft.borrow().recipe.clone();
+        let mut selected = vec![false; preview_recipe.windows.len()];
+        for (index, button) in include_buttons.borrow().iter() {
+            selected[*index] = button.is_active();
+        }
+        if state::apply_capture_selection(&mut preview_recipe, &selected).is_ok() {
+            preview_holder.append(&build_capture_preview(&preview_recipe));
+        }
+    }
+    preview_card.append(&preview_holder);
+
+    for (_, button) in include_buttons.borrow().iter() {
+        let draft = Rc::clone(&draft);
+        let buttons = Rc::clone(&include_buttons);
+        let holder = preview_holder.clone();
+        let count = detected_count.clone();
+        button.connect_toggled(move |_| {
+            let mut preview_recipe = draft.borrow().recipe.clone();
+            let mut selected = vec![false; preview_recipe.windows.len()];
+            for (index, button) in buttons.borrow().iter() {
+                selected[*index] = button.is_active();
+            }
+            let selected_count = selected.iter().filter(|value| **value).count();
+            count.set_text(&format!(
+                "{} {}",
+                selected_count,
+                if language == Language::Ru {
+                    "будет сохранено"
+                } else {
+                    "will be saved"
+                }
+            ));
+            while let Some(child) = holder.first_child() {
+                holder.remove(&child);
+            }
+            if state::apply_capture_selection(&mut preview_recipe, &selected).is_ok() {
+                holder.append(&build_capture_preview(&preview_recipe));
+            }
+        });
+    }
     lower.attach(&preview_card, 1, 0, 1, 1);
 
     page.append(&lower);
@@ -2128,6 +2287,7 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
     let weak = Rc::downgrade(state);
     let draft_for_save = Rc::clone(&draft);
     let entries_for_save = Rc::clone(&command_entries);
+    let includes_for_save = Rc::clone(&include_buttons);
     let name_for_save = name_entry.clone();
     let workspace_for_save = workspace_entry.clone();
     create.connect_clicked(move |_| {
@@ -2160,27 +2320,19 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             }
         }
 
+        let mut included = vec![false; recipe.windows.len()];
+        for (index, button) in includes_for_save.borrow().iter() {
+            included[*index] = button.is_active();
+        }
+        if let Err(error) = state::apply_capture_selection(&mut recipe, &included) {
+            toast_message(&state, &error.to_string());
+            return;
+        }
+
         let display_name = name_for_save.text().trim().to_owned();
         recipe.name = (!display_name.is_empty()).then_some(display_name.clone());
-        let base = state::unique_slug(if display_name.is_empty() {
-            &recipe.workspace
-        } else {
-            &display_name
-        });
-        let base = if base.is_empty() {
-            "workbench".to_owned()
-        } else {
-            base
-        };
-
         let mut next = state.config.borrow().clone();
-        let mut key = base.clone();
-        let mut suffix = 2usize;
-        while next.workbench.contains_key(&key) {
-            key = format!("{base}-{suffix}");
-            suffix += 1;
-        }
-        next.workbench.insert(key, recipe);
+        let (_key, _replaced) = state::upsert_captured_recipe(&mut next, recipe);
 
         match state::persist_config(&state.config_path, &next) {
             Ok(()) => {
@@ -2191,6 +2343,21 @@ fn build_capture(state: &Rc<UiState>) -> gtk::ScrolledWindow {
             Err(error) => toast_message(&state, &error.to_string()),
         }
     });
+
+    state.window.remove_action("save-capture");
+    let save_capture_action = gtk::gio::SimpleAction::new("save-capture", None);
+    {
+        let weak_create = create.downgrade();
+        save_capture_action.connect_activate(move |_, _| {
+            if let Some(create) = weak_create.upgrade() {
+                create.emit_clicked();
+            }
+        });
+    }
+    state.window.add_action(&save_capture_action);
+    if let Some(app) = state.window.application() {
+        app.set_accels_for_action("win.save-capture", &["<Primary>s"]);
+    }
 
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -3461,6 +3628,7 @@ fn installed_app_window_spec(app: &state::InstalledApp) -> WindowSpec {
             app_id,
             title: None,
             process: None,
+            cwd: None,
             pid: None,
             window_id: None,
         },
@@ -3478,7 +3646,7 @@ fn show_add_window_dialog(state: &Rc<UiState>, key: &str, draft: Rc<RefCell<Reci
             return;
         }
     };
-    let captured = match state::capture_workspace(&snapshot, None) {
+    let captured = match state::capture_workspace(&snapshot, None, None) {
         Ok(captured) => captured,
         Err(error) => {
             toast_message(state, &error.to_string());
@@ -4272,6 +4440,36 @@ fn build_selected_window_controls(
                 }
                 Err(error) => {
                     set_entry_validation(entry, &errors, "match-title", Some(error.to_string()));
+                }
+            }
+        });
+    }
+
+    let cwd_match = gtk::Entry::new();
+    cwd_match.set_text(current.match_spec.cwd.as_deref().unwrap_or(""));
+    advanced_box.append(&labeled_control(tr(language, "match_cwd"), &cwd_match));
+    {
+        let draft = Rc::clone(&draft);
+        let errors = Rc::clone(&validation_errors);
+        cwd_match.connect_changed(move |entry| {
+            let value = entry.text().trim().to_owned();
+            if value.is_empty() {
+                if let Some(window) = draft.borrow_mut().windows.get_mut(index) {
+                    window.match_spec.cwd = None;
+                }
+                set_entry_validation(entry, &errors, "match-cwd", None);
+                return;
+            }
+
+            match Regex::new(&value) {
+                Ok(_) => {
+                    if let Some(window) = draft.borrow_mut().windows.get_mut(index) {
+                        window.match_spec.cwd = Some(value);
+                    }
+                    set_entry_validation(entry, &errors, "match-cwd", None);
+                }
+                Err(error) => {
+                    set_entry_validation(entry, &errors, "match-cwd", Some(error.to_string()));
                 }
             }
         });

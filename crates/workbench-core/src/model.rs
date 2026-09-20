@@ -50,6 +50,7 @@ pub struct MatchSpec {
     pub app_id: Option<String>,
     pub title: Option<String>,
     pub process: Option<String>,
+    pub cwd: Option<String>,
     pub pid: Option<i32>,
 }
 
@@ -171,6 +172,7 @@ pub struct RuntimeWindow {
     pub app_id: Option<String>,
     pub pid: Option<i32>,
     pub process_exe: Option<String>,
+    pub cwd: Option<String>,
     pub workspace_id: Option<u64>,
     pub is_focused: bool,
     pub is_floating: bool,

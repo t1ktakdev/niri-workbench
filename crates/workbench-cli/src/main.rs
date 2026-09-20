@@ -11,8 +11,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 use workbench_core::{
-    CandidateDecision, ObservedState, Recipe, ReusePolicy, WindowSpec, build_reconcile_plan,
-    choose_candidate, load_config,
+    CandidateDecision, Config, ObservedState, Recipe, ReusePolicy, WindowSpec,
+    build_reconcile_plan, choose_candidate, load_config,
 };
 use workbench_niri::{NiriSession, format_action, reconcile};
 
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         Some(Commands::Quick) => launch_ui(true),
         Some(Commands::Doctor) => doctor(&config_path, cli.socket.as_deref()).await,
         Some(Commands::List) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             for (key, recipe) in config.workbench {
                 let display = recipe.name.as_deref().unwrap_or(&recipe.workspace);
                 println!("{key:<20} {display}  [workspace: {}]", recipe.workspace);
@@ -101,31 +101,31 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Commands::Show { name }) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             print_recipe(&name, recipe);
             Ok(())
         }
         Some(Commands::Status { name }) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             status(&name, recipe, &session).await
         }
         Some(Commands::Plan { name }) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             plan(&name, recipe, &session).await
         }
         Some(Commands::Open { name }) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             apply(&name, recipe, &session).await
         }
         Some(Commands::Apply { name, dry_run }) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             if dry_run {
@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::Repair { name }) => {
-            let config = load_config(&config_path)?;
+            let config = load_config_for_cli(&config_path)?;
             let recipe = recipe(&config.workbench, &name)?;
             let session = connect(cli.socket.as_deref()).await?;
             repair(&name, recipe, &session).await
@@ -180,6 +180,15 @@ fn init_tracing(verbose: u8) {
         .init();
 }
 
+fn load_config_for_cli(path: &Path) -> Result<Config> {
+    if !path.exists() {
+        return Ok(Config {
+            workbench: BTreeMap::new(),
+        });
+    }
+    load_config(path).map_err(Into::into)
+}
+
 fn default_config_path() -> PathBuf {
     if let Some(config_home) = env::var_os("XDG_CONFIG_HOME") {
         return PathBuf::from(config_home)
@@ -209,8 +218,14 @@ async fn connect(socket: Option<&Path>) -> Result<NiriSession> {
 
 fn recipe<'a>(workbenches: &'a BTreeMap<String, Recipe>, name: &str) -> Result<&'a Recipe> {
     workbenches.get(name).ok_or_else(|| {
-        let choices = workbenches.keys().cloned().collect::<Vec<_>>().join(", ");
-        anyhow!("unknown workbench {name:?}; configured: {choices}")
+        if workbenches.is_empty() {
+            anyhow!(
+                "unknown workbench {name:?}; no workbenches are configured yet — use `niri-workbench ui` and Save current"
+            )
+        } else {
+            let choices = workbenches.keys().cloned().collect::<Vec<_>>().join(", ");
+            anyhow!("unknown workbench {name:?}; configured: {choices}")
+        }
     })
 }
 
@@ -691,10 +706,17 @@ async fn doctor(config_path: &Path, socket_override: Option<&Path>) -> Result<()
         errors += 1;
     }
 
-    let config = match load_config(config_path) {
+    let config = match load_config_for_cli(config_path) {
         Ok(config) => {
-            println!("✓ config parsed {}", config_path.display());
-            println!("✓ {} workbench(es)", config.workbench.len());
+            if config_path.exists() {
+                println!("✓ config parsed {}", config_path.display());
+                println!("✓ {} workbench(es)", config.workbench.len());
+            } else {
+                println!(
+                    "✓ no config yet; library is empty ({})",
+                    config_path.display()
+                );
+            }
             Some(config)
         }
         Err(err) => {
@@ -839,4 +861,24 @@ fn is_executable(path: &Path) -> bool {
     fs::metadata(path)
         .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn missing_config_is_an_empty_first_run_library() {
+        let path = env::temp_dir().join(format!(
+            "niri-workbench-missing-config-{}-{}.toml",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let config = load_config_for_cli(&path).unwrap();
+        assert!(config.workbench.is_empty());
+        assert!(!path.exists());
+    }
 }

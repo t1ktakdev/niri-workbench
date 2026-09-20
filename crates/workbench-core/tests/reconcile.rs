@@ -12,6 +12,7 @@ fn window(id: u64, app_id: &str, column: usize, tile: usize) -> RuntimeWindow {
         app_id: Some(app_id.to_owned()),
         pid: Some(id as i32),
         process_exe: Some(format!("/usr/bin/{app_id}")),
+        cwd: None,
         workspace_id: Some(10),
         is_focused: id == 12,
         is_floating: false,

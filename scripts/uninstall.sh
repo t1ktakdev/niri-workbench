@@ -6,7 +6,7 @@ bindir=${BINDIR:-"$prefix/bin"}
 appdir=${APPDIR:-"$prefix/share/applications"}
 
 removed=0
-for target in     "$bindir/niri-workbench"     "$bindir/niri-workbench-ui"     "$appdir/niri-workbench.desktop"
+for target in     "$bindir/niri-workbench"     "$bindir/niri-workbench-ui"     "$appdir/dev.t1ktak.NiriWorkbench.desktop"     "$appdir/niri-workbench.desktop"
 do
     if [ -e "$target" ]; then
         rm -- "$target"

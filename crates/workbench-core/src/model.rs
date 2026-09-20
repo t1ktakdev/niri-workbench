@@ -4,13 +4,13 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub workbench: BTreeMap<String, Recipe>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Recipe {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -31,7 +31,7 @@ const fn default_spawn_timeout_ms() -> u64 {
     10_000
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WindowSpec {
     pub name: String,
     #[serde(default)]
@@ -44,7 +44,7 @@ pub struct WindowSpec {
     pub layout: PlacementSpec,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct MatchSpec {
     pub window_id: Option<u64>,
     pub app_id: Option<String>,
@@ -61,7 +61,7 @@ pub enum ReusePolicy {
     Never,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct PlacementSpec {
     #[serde(default = "default_column")]
     pub column: usize,

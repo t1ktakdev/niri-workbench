@@ -24,10 +24,10 @@ impl Language {
 pub fn tr(language: Language, key: &str) -> &str {
     match (language, key) {
         (Language::Ru, "home") => "Главная",
-        (Language::Ru, "capture") => "Захват",
+        (Language::Ru, "capture") => "Снимок",
         (Language::Ru, "library") => "Библиотека",
         (Language::Ru, "settings") => "Настройки",
-        (Language::Ru, "new") => "Новый",
+        (Language::Ru, "new") => "Сохранить текущее",
         (Language::Ru, "search") => "Поиск рабочих окружений…",
         (Language::Ru, "open") => "Открыть",
         (Language::Ru, "repair") => "Исправить",
@@ -47,11 +47,11 @@ pub fn tr(language: Language, key: &str) -> &str {
         }
         (Language::Ru, "empty_title") => "Пока нет рабочих окружений",
         (Language::Ru, "empty_body") => {
-            "Расставь окна как тебе удобно и нажми «Захват», либо создай окружение вручную."
+            "Расставь реальные окна как тебе удобно и нажми «Сохранить текущее». Workbench снимет открытые окна, приложения и раскладку."
         }
-        (Language::Ru, "capture_title") => "Захват текущего workspace",
+        (Language::Ru, "capture_title") => "Сохранить текущее окружение",
         (Language::Ru, "capture_intro") => {
-            "Сохрани то, что уже расставил. Workbench определит окна и их позиции; команды запуска можно поправить перед сохранением."
+            "Workbench снимет реальные окна этого workspace, их приложения, позиции и доступный контекст запуска. Проверь результат и сохрани."
         }
         (Language::Ru, "detected_windows") => "Найденные окна",
         (Language::Ru, "workbench_details") => "Параметры окружения",
@@ -61,7 +61,7 @@ pub fn tr(language: Language, key: &str) -> &str {
         (Language::Ru, "auto") => "Авто",
         (Language::Ru, "launch_command") => "Команда запуска",
         (Language::Ru, "reuse_only") => "Только переиспользование",
-        (Language::Ru, "create_workbench") => "Создать окружение",
+        (Language::Ru, "create_workbench") => "Сохранить снимок",
         (Language::Ru, "cancel") => "Отмена",
         (Language::Ru, "edit_workbench") => "Редактор окружения",
         (Language::Ru, "save") => "Сохранить",
@@ -95,10 +95,10 @@ pub fn tr(language: Language, key: &str) -> &str {
         (Language::Ru, "config_error") => "Ошибка конфигурации",
         (Language::Ru, "refresh") => "Обновить",
         (_, "home") => "Home",
-        (_, "capture") => "Capture",
+        (_, "capture") => "Snapshot",
         (_, "library") => "Library",
         (_, "settings") => "Settings",
-        (_, "new") => "New",
+        (_, "new") => "Save current",
         (_, "search") => "Search workbenches…",
         (_, "open") => "Open",
         (_, "repair") => "Repair",
@@ -118,11 +118,11 @@ pub fn tr(language: Language, key: &str) -> &str {
         }
         (_, "empty_title") => "No workbenches yet",
         (_, "empty_body") => {
-            "Arrange your windows and capture the workspace, or create a workbench manually."
+            "Arrange the real windows you want, then choose Save current. Workbench snapshots the open apps and their layout."
         }
-        (_, "capture_title") => "Capture current workspace",
+        (_, "capture_title") => "Save current workspace",
         (_, "capture_intro") => {
-            "Save what you already arranged. Workbench detects windows and positions; review launch commands before saving."
+            "Workbench snapshots the real windows on this workspace, their installed apps, positions, and available launch context. Review and save."
         }
         (_, "detected_windows") => "Detected windows",
         (_, "workbench_details") => "Workbench details",
@@ -132,7 +132,7 @@ pub fn tr(language: Language, key: &str) -> &str {
         (_, "auto") => "Auto",
         (_, "launch_command") => "Launch command",
         (_, "reuse_only") => "Reuse only",
-        (_, "create_workbench") => "Create workbench",
+        (_, "create_workbench") => "Save snapshot",
         (_, "cancel") => "Cancel",
         (_, "edit_workbench") => "Edit workbench",
         (_, "save") => "Save",

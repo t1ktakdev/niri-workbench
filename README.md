@@ -14,13 +14,13 @@ niri-workbench plan rust-dev
 niri-workbench open rust-dev
 ```
 
-`niri-workbench` turns a declarative project recipe into a real Niri workspace. It reuses matching windows when that is unambiguous, spawns missing applications, moves them to a named workspace, rebuilds columns, applies sizing and tabbed display, then restores a requested final focus.
+`niri-workbench` can snapshot the real windows on your current Niri workspace into a reusable desired-state recipe. Reopening that snapshot reuses matching windows when possible, launches missing applications, restores the named workspace, columns, sizing, floating/tabbed state and final focus.
 
-It is intentionally not a session restore tool. A session manager answers “what was open last time?”; workbench answers “what should this project workspace look like?”
+It is a workspace snapshot/rebuilder, not a byte-for-byte process checkpoint: it restores windows, applications, layout and app-specific launch context where it can, but it does not serialize application memory or claim to preserve every application's internal session state.
 
 ## Why
 
-Project workspaces are usually intentional. A Rust project may need an editor, docs browser, terminal running `cargo watch`, and a second terminal arranged the same way every day. Saving the previous desktop state is a different problem.
+Project workspaces are usually intentional. Arrange the editor, browser and terminals the way you want, choose **Save current**, then reopen that snapshot later. The saved recipe stays editable, so automatic capture and deliberate configuration can coexist.
 
 The core loop is:
 
@@ -125,7 +125,17 @@ niri-workbench apply rust-dev --dry-run
 niri-workbench open rust-dev
 ```
 
-The GUI includes Home, Capture, Library, Settings, a visual layout editor, and a compact quick launcher. Capture reads the currently focused Niri workspace and builds an editable draft; launch commands are always shown before the recipe is saved.
+The GUI includes Home, Snapshot, Library, Settings, a visual layout editor, and a compact quick launcher. **Save current** reads the focused Niri workspace and builds a snapshot from the real open windows. It resolves installed applications from desktop entries and Flatpak exports, infers launch context for common apps, and shows the result before saving. Add Window offers real open windows plus applications actually installed on the system. The editor validates the recipe and protects unsaved changes when leaving or closing the window.
+
+Editor shortcuts:
+
+```text
+Ctrl+N    add a window from the current Niri workspace
+Ctrl+S    save the current recipe
+Alt+Left  leave the editor (with an unsaved-changes prompt when needed)
+```
+
+The quick launcher supports keyboard selection; `Enter` performs the primary action and `Ctrl+Enter` runs Repair when it is available.
 
 For a Niri key binding, point directly at the quick launcher, for example:
 
@@ -212,7 +222,9 @@ Percentage verification is approximate because IPC exposes logical output dimens
 
 Some column actions are focus-based in Niri. Workbench uses ID-addressable actions where available and restores the configured final focus after reconciliation.
 
-Graphical Capture is intentionally conservative. It can infer common launch commands such as Kitty, VS Code, Chrome and Firefox and otherwise falls back to a known process executable when safe. Arbitrary GUI launch commands, document/session state, browser URLs and current tabbed-column mode cannot always be reconstructed from Niri IPC, so Capture presents an editable draft instead of claiming perfect session restoration.
+Graphical Snapshot is intentionally conservative. It can infer common launch commands such as Kitty, VS Code, Chrome and Firefox, resolve installed desktop applications, and otherwise fall back to a known process executable when safe. Niri IPC does not expose arbitrary application-internal session state, so the snapshot stays editable instead of pretending restoration is perfect.
+
+For Chrome, Workbench can best-effort recover the detected profile and active page URL. When `sqlite3` is available it may read a temporary local copy of Chrome's History database to map the current window title to its most recent URL; that lookup stays on the machine and is not uploaded. This does **not** preserve a complete tab set, back/forward history, form state, or arbitrary browser memory, and the inferred URL may be unavailable or imperfect.
 
 ## Development
 
@@ -227,9 +239,9 @@ Architecture and upstream constraints are documented in `docs/architecture.md`. 
 
 ## Roadmap
 
-v0.1 focuses on declarative recipes, event-driven matching, idempotent apply, named workspaces, columns, sizing, tabbed display, dry-run and doctor.
+v0.2 adds the snapshot-first GTK workflow, installed-application discovery, safer single-instance navigation, validation/unsaved guards, native window actions, and best-effort application-aware capture on top of the declarative reconciler.
 
-Possible later work: richer capture hints for applications with recoverable document/session metadata, keyboard-driven editor improvements, shell completions, and per-recipe environment declarations. No timeline is implied.
+Possible later work: richer capture hints for applications with recoverable document/session metadata, shell completions, stronger desktop integration, and per-recipe environment declarations. No timeline is implied.
 
 ## License
 

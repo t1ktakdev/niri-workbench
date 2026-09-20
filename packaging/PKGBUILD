@@ -1,6 +1,6 @@
 # Maintainer example for niri-workbench.
 pkgname=niri-workbench
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Reproducible project workspaces for the Niri Wayland compositor'
 arch=('x86_64')
@@ -30,7 +30,7 @@ package() {
   cd "$pkgname-$pkgver"
   install -Dm755 target/release/niri-workbench "$pkgdir/usr/bin/niri-workbench"
   install -Dm755 target/release/niri-workbench-ui "$pkgdir/usr/bin/niri-workbench-ui"
-  install -Dm644 packaging/niri-workbench.desktop "$pkgdir/usr/share/applications/niri-workbench.desktop"
+  install -Dm644 packaging/dev.t1ktak.NiriWorkbench.desktop "$pkgdir/usr/share/applications/dev.t1ktak.NiriWorkbench.desktop"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

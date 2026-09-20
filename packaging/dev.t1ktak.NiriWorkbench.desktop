@@ -7,6 +7,17 @@ Comment[ru]=Рабочие окружения проектов для Niri
 Exec=niri-workbench ui
 Icon=applications-development
 Terminal=false
-Categories=Development;Utility;
+Categories=Development;
 Keywords=Niri;Workspace;Workbench;Layout;
 StartupNotify=true
+Actions=Quick;Capture;
+
+[Desktop Action Quick]
+Name=Quick Launcher
+Name[ru]=Быстрый запуск
+Exec=niri-workbench quick
+
+[Desktop Action Capture]
+Name=Capture current workspace
+Name[ru]=Захват текущего workspace
+Exec=niri-workbench-ui --capture

@@ -47,6 +47,6 @@ makepkg -p niri-workbench-pkgbuild
 ```
 
 A full desktop package should install the CLI binary, `niri-workbench-ui`,
-and `niri-workbench.desktop`. Headless/CLI-only packages may omit the GUI.
+and `dev.t1ktak.NiriWorkbench.desktop`. Headless/CLI-only packages may omit the GUI.
 The default configuration remains user-owned at
 `$XDG_CONFIG_HOME/niri-workbench/config.toml`.

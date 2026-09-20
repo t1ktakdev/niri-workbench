@@ -53,9 +53,8 @@ the same IPC library rather than relying on compositor config rules.
 
 A startup race found during Capture testing was fixed by waiting on EventStream
 until the UI toplevel with the current process PID is observable, then waiting
-for the floating-state event before applying fixed width/height. The final live
-Capture check reported a floating 1260x820 window; the Quick Launcher reported a
-floating 780x570 window.
+for the floating-state event before applying fixed width/height. The current full manager requests a floating 1240x780 window; the Quick Launcher
+requests a floating 780x570 window.
 
 ## Release gate
 

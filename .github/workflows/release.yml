@@ -52,7 +52,7 @@ jobs:
           install -m 0755 scripts/uninstall.sh "$dir/uninstall.sh"
           install -m 0644 README.md CHANGELOG.md LICENSE "$dir/"
           install -m 0644 packaging/PKGBUILD "$dir/PKGBUILD"
-          install -m 0644 packaging/niri-workbench.desktop "$dir/niri-workbench.desktop"
+          install -m 0644 packaging/dev.t1ktak.NiriWorkbench.desktop "$dir/dev.t1ktak.NiriWorkbench.desktop"
 
           tar -czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > SHA256SUMS

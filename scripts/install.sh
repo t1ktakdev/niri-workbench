@@ -33,7 +33,7 @@ install -m 0755 "$cli_bin" "$bindir/niri-workbench"
 install -m 0755 "$ui_bin" "$bindir/niri-workbench-ui"
 
 desktop_source=""
-for candidate in     "$script_dir/niri-workbench.desktop"     "$script_dir/../packaging/niri-workbench.desktop"
+for candidate in     "$script_dir/dev.t1ktak.NiriWorkbench.desktop"     "$script_dir/../packaging/dev.t1ktak.NiriWorkbench.desktop"
 do
     if [ -f "$candidate" ]; then
         desktop_source=$candidate
@@ -43,12 +43,12 @@ done
 
 if [ -n "$desktop_source" ]; then
     mkdir -p "$appdir"
-    install -m 0644 "$desktop_source" "$appdir/niri-workbench.desktop"
+    install -m 0644 "$desktop_source" "$appdir/dev.t1ktak.NiriWorkbench.desktop"
 fi
 
 echo "installed $bindir/niri-workbench"
 echo "installed $bindir/niri-workbench-ui"
-[ -n "$desktop_source" ] && echo "installed $appdir/niri-workbench.desktop"
+[ -n "$desktop_source" ] && echo "installed $appdir/dev.t1ktak.NiriWorkbench.desktop"
 
 case ":$PATH:" in
     *":$bindir:"*) ;;
